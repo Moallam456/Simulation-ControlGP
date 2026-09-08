@@ -14,8 +14,8 @@ function [qSolution, info] = controlIK(robot, T_B_TCP_target, qSeed)
 
 maxIterations = 1000;
 
-positionTolerance = 1e-6;      % meters
-orientationTolerance = 1e-6;   % radians
+positionTolerance = 1e-4;      % meters
+orientationTolerance = 1e-4;   % radians
 
 lambda = 0.01;                 % Damping factor
 stepSize = 0.5;                % Joint update scaling
