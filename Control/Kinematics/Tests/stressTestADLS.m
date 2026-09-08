@@ -145,6 +145,43 @@ seedQuarterHigh = ...
 positionTolerance = 1e-4;       % [m]
 orientationTolerance = 1e-4;    % [rad]
 
+%% 5A. Diagnostic visualization configuration
+%
+% The stress test still evaluates every run exactly as before.
+% Visualization is generated AFTER all runs finish.
+%
+% Selection policy:
+%   - Plot every failed run.
+%   - Also plot a few representative successful runs:
+%       1) fastest successful solve
+%       2) slowest successful solve
+%       3) successful solve with strongest damping
+%
+% Each figure contains up to two runs.
+% Each run gets:
+%   1) a 2-D IK cost-landscape slice
+%   2) independent pose-cost history
+%   3) sigma_min / lambda history
+%
+% IMPORTANT:
+% The contour is a 2-joint slice of the full 6-D IK objective.
+% It is useful for visualization, but it is NOT proof by itself that a
+% point is a true local minimum in the complete 6-D joint space.
+
+viz.enabled = true;
+
+viz.numberOfSuccessExamples = 3;
+viz.runsPerFigure = 2;
+
+% Grid resolution for each contour plot.
+% 45 is a good compromise between smoothness and runtime.
+viz.contourGridSize = 45;
+
+% Default joints used for the 2-D cost slice.
+% Use [] instead to automatically choose the two joints that moved most
+% during that particular IK run.
+viz.contourJoints = [2 3];
+
 %% 6. Deterministic random generator
 %
 % Keep this identical to stressTestIKSeeds so that both solvers receive
@@ -211,6 +248,15 @@ seedStore = nan( ...
     numberOfSeeds, ...
     numberOfTargets);
 
+% Store target poses so diagnostic plots can be generated after all runs.
+TTargetStore = nan(4,4,numberOfTargets);
+
+% Per-run solver histories used only for diagnostics / visualization.
+qHistoryStore = cell(totalRuns,1);
+hasIterationHistory = false(totalRuns,1);
+sigmaHistoryStore = cell(totalRuns,1);
+lambdaHistoryStore = cell(totalRuns,1);
+
 row = 0;
 
 %% 8. Run all target / seed combinations
@@ -228,6 +274,8 @@ for targetIndex = 1:numberOfTargets
         simRobot, ...
         qTarget + thetaOffset, ...
         'TCP');
+
+    TTargetStore(:,:,targetIndex) = TTarget;
 
     % Generate two deterministic random seeds.
     randomA = ...
@@ -307,6 +355,33 @@ for targetIndex = 1:numberOfTargets
         end
 
         qSolution = qSolution(:);
+
+        % ------------------------------------------------------
+        % Capture full joint-iteration history if ADLS_IK exposes it.
+        %
+        % If qHistory is unavailable, the diagnostic plots gracefully
+        % fall back to showing only the seed and final solution.
+        % ------------------------------------------------------
+
+        [qHistory,hasRealHistory] = ...
+            extractQHistory(info,n,qSeed,qSolution);
+
+        qHistoryStore{row} = qHistory;
+        hasIterationHistory(row) = hasRealHistory;
+
+        if isfield(info,'sigmaMinHistory') && ...
+           ~isempty(info.sigmaMinHistory)
+
+            sigmaHistoryStore{row} = info.sigmaMinHistory(:);
+
+        end
+
+        if isfield(info,'lambdaHistory') && ...
+           ~isempty(info.lambdaHistory)
+
+            lambdaHistoryStore{row} = info.lambdaHistory(:);
+
+        end
 
         %% -----------------------------------------------------
         % Validate returned solution size
@@ -709,9 +784,850 @@ else
 
 end
 
+%% 12. Failure / success diagnostic visualization
+
+if viz.enabled
+
+    plotADLSStressDiagnostics( ...
+        simRobot, ...
+        thetaOffset, ...
+        qMin, ...
+        qMax, ...
+        seedLow, ...
+        seedHigh, ...
+        TTargetStore, ...
+        Target, ...
+        Seed, ...
+        Pass, ...
+        Iterations, ...
+        MaxLambda, ...
+        solutionStore, ...
+        seedStore, ...
+        qHistoryStore, ...
+        hasIterationHistory, ...
+        sigmaHistoryStore, ...
+        lambdaHistoryStore, ...
+        positionTolerance, ...
+        orientationTolerance, ...
+        numberOfSeeds, ...
+        viz);
+
+end
+
 fprintf('============================================================\n\n');
 
 end
+
+
+%% ========================================================================
+% Local function: extract / normalize q history from ADLS_IK
+% ========================================================================
+
+function [qHistory,hasRealHistory] = ...
+    extractQHistory(info,n,qSeed,qSolution)
+
+hasRealHistory = false;
+qHistory = [];
+
+if isfield(info,'qHistory') && ~isempty(info.qHistory)
+
+    raw = info.qHistory;
+
+    if size(raw,1) == n
+
+        qHistory = raw;
+        hasRealHistory = true;
+
+    elseif size(raw,2) == n
+
+        qHistory = raw.';
+        hasRealHistory = true;
+
+    end
+
+end
+
+% Remove columns containing NaN / Inf so plotting remains robust.
+if ~isempty(qHistory)
+
+    finiteColumns = all(isfinite(qHistory),1);
+    qHistory = qHistory(:,finiteColumns);
+
+end
+
+% Ensure the first point is the actual seed.
+if isempty(qHistory)
+
+    qHistory = qSeed(:);
+
+elseif norm(qHistory(:,1) - qSeed(:)) > 1e-12
+
+    qHistory = [qSeed(:), qHistory];
+
+end
+
+% Ensure the final returned configuration appears in the history.
+if numel(qSolution) == n && all(isfinite(qSolution))
+
+    if isempty(qHistory) || ...
+       norm(qHistory(:,end) - qSolution(:)) > 1e-12
+
+        qHistory = [qHistory, qSolution(:)];
+
+    end
+
+end
+
+end
+
+
+%% ========================================================================
+% Local function: choose runs and create diagnostic figures
+% ========================================================================
+
+function plotADLSStressDiagnostics( ...
+    simRobot, ...
+    thetaOffset, ...
+    qMin, ...
+    qMax, ...
+    seedLow, ...
+    seedHigh, ...
+    TTargetStore, ...
+    Target, ...
+    Seed, ...
+    Pass, ...
+    Iterations, ...
+    MaxLambda, ...
+    solutionStore, ...
+    seedStore, ...
+    qHistoryStore, ...
+    hasIterationHistory, ...
+    sigmaHistoryStore, ...
+    lambdaHistoryStore, ...
+    positionTolerance, ...
+    orientationTolerance, ...
+    numberOfSeeds, ...
+    viz)
+
+failureRows = find(~Pass);
+successRows = find(Pass);
+
+representativeSuccessRows = ...
+    selectRepresentativeSuccesses( ...
+        successRows, ...
+        Iterations, ...
+        MaxLambda, ...
+        viz.numberOfSuccessExamples);
+
+selectedRows = ...
+    interleaveFailureSuccessRows( ...
+        failureRows, ...
+        representativeSuccessRows);
+
+if isempty(selectedRows)
+
+    fprintf('\n[Visualization] No runs available to plot.\n');
+    return
+
+end
+
+fprintf('\n============================================================\n');
+fprintf(' ADLS IK DIAGNOSTIC VISUALIZATION\n');
+fprintf('============================================================\n');
+fprintf('Failed runs plotted          : %d\n',numel(failureRows));
+fprintf('Successful examples plotted  : %d\n', ...
+    numel(representativeSuccessRows));
+fprintf('Runs per figure              : %d\n',viz.runsPerFigure);
+
+if any(~hasIterationHistory(selectedRows))
+
+    fprintf([ ...
+        'NOTE: At least one selected run has no info.qHistory. ' ...
+        'For those runs, only seed/final points can be shown.\n']);
+
+end
+
+fprintf([ ...
+    'Contour meaning: 2-joint slice of the 6-D diagnostic IK cost; ' ...
+    'other joints are fixed at the final/last configuration.\n']);
+fprintf([ ...
+    'Cost meaning: 0.5*((positionError/positionTolerance)^2 + ' ...
+    '(orientationError/orientationTolerance)^2).\n\n']);
+
+numberSelected = numel(selectedRows);
+numberFigures = ceil(numberSelected / viz.runsPerFigure);
+
+for figureIndex = 1:numberFigures
+
+    firstIndex = ...
+        (figureIndex - 1) * viz.runsPerFigure + 1;
+
+    lastIndex = min( ...
+        figureIndex * viz.runsPerFigure, ...
+        numberSelected);
+
+    rowsThisFigure = selectedRows(firstIndex:lastIndex);
+    numberRowsThisFigure = numel(rowsThisFigure);
+
+    figure( ...
+        'Name',sprintf( ...
+            'ADLS IK Diagnostics %d/%d', ...
+            figureIndex, ...
+            numberFigures), ...
+        'NumberTitle','off');
+
+    tiledlayout( ...
+        numberRowsThisFigure, ...
+        3, ...
+        'TileSpacing','compact', ...
+        'Padding','compact');
+
+    for localIndex = 1:numberRowsThisFigure
+
+        runRow = rowsThisFigure(localIndex);
+
+        targetIndex = Target(runRow);
+        seedIndex = mod(runRow - 1,numberOfSeeds) + 1;
+
+        qSeed = seedStore(:,seedIndex,targetIndex);
+        qSolution = solutionStore(:,seedIndex,targetIndex);
+        qHistory = qHistoryStore{runRow};
+
+        TTarget = TTargetStore(:,:,targetIndex);
+
+        sigmaHistory = sigmaHistoryStore{runRow};
+        lambdaHistory = lambdaHistoryStore{runRow};
+
+        % ------------------------------------------------------
+        % Panel 1: 2-D cost landscape
+        % ------------------------------------------------------
+
+        nexttile;
+
+        plotCostLandscape( ...
+            simRobot, ...
+            thetaOffset, ...
+            qMin, ...
+            qMax, ...
+            seedLow, ...
+            seedHigh, ...
+            TTarget, ...
+            qSeed, ...
+            qSolution, ...
+            qHistory, ...
+            Pass(runRow), ...
+            targetIndex, ...
+            Seed(runRow), ...
+            positionTolerance, ...
+            orientationTolerance, ...
+            viz);
+
+        % ------------------------------------------------------
+        % Panel 2: cost vs iteration
+        % ------------------------------------------------------
+
+        nexttile;
+
+        plotCostHistory( ...
+            simRobot, ...
+            thetaOffset, ...
+            TTarget, ...
+            qHistory, ...
+            hasIterationHistory(runRow), ...
+            positionTolerance, ...
+            orientationTolerance);
+
+        % ------------------------------------------------------
+        % Panel 3: sigma_min and lambda
+        % ------------------------------------------------------
+
+        nexttile;
+
+        plotDampingDiagnostics( ...
+            sigmaHistory, ...
+            lambdaHistory);
+
+    end
+
+    sgtitle(sprintf( ...
+        'ADLS IK selected-run diagnostics - figure %d of %d', ...
+        figureIndex, ...
+        numberFigures));
+
+end
+
+end
+
+
+%% ========================================================================
+% Local function: representative successful runs
+% ========================================================================
+
+function selected = selectRepresentativeSuccesses( ...
+    successRows,Iterations,MaxLambda,requestedCount)
+
+selected = [];
+
+if isempty(successRows) || requestedCount <= 0
+    return
+end
+
+% 1) Fastest successful run.
+[~,idx] = min(Iterations(successRows));
+selected(end+1) = successRows(idx); %#ok<AGROW>
+
+% 2) Slowest successful run.
+[~,idx] = max(Iterations(successRows));
+candidate = successRows(idx);
+
+if ~ismember(candidate,selected)
+    selected(end+1) = candidate; %#ok<AGROW>
+end
+
+% 3) Successful run that experienced the strongest damping.
+lambdaValues = MaxLambda(successRows);
+lambdaValues(~isfinite(lambdaValues)) = -inf;
+
+if any(isfinite(MaxLambda(successRows)))
+
+    [~,idx] = max(lambdaValues);
+    candidate = successRows(idx);
+
+    if ~ismember(candidate,selected)
+        selected(end+1) = candidate; %#ok<AGROW>
+    end
+
+end
+
+% Fill deterministically if the diagnostic categories overlapped.
+for k = 1:numel(successRows)
+
+    if numel(selected) >= requestedCount
+        break
+    end
+
+    candidate = successRows(k);
+
+    if ~ismember(candidate,selected)
+        selected(end+1) = candidate; %#ok<AGROW>
+    end
+
+end
+
+selected = selected(1:min(requestedCount,numel(selected)));
+
+end
+
+
+%% ========================================================================
+% Local function: pair failures with successes where possible
+% ========================================================================
+
+function selected = interleaveFailureSuccessRows( ...
+    failureRows,successRows)
+
+selected = [];
+
+f = 1;
+s = 1;
+
+while f <= numel(failureRows) || s <= numel(successRows)
+
+    if f <= numel(failureRows)
+        selected(end+1) = failureRows(f); %#ok<AGROW>
+        f = f + 1;
+    end
+
+    if s <= numel(successRows)
+        selected(end+1) = successRows(s); %#ok<AGROW>
+        s = s + 1;
+    end
+
+end
+
+end
+
+
+%% ========================================================================
+% Local function: 2-D cost-landscape slice
+% ========================================================================
+
+function plotCostLandscape( ...
+    simRobot, ...
+    thetaOffset, ...
+    qMin, ...
+    qMax, ...
+    seedLow, ...
+    seedHigh, ...
+    TTarget, ...
+    qSeed, ...
+    qSolution, ...
+    qHistory, ...
+    runPassed, ...
+    targetIndex, ...
+    seedName, ...
+    positionTolerance, ...
+    orientationTolerance, ...
+    viz)
+
+n = numel(qSeed);
+
+if isempty(qHistory)
+    qHistory = qSeed(:);
+end
+
+% Choose which two joints define the plotted slice.
+if isempty(viz.contourJoints)
+
+    jointMotion = max(qHistory,[],2) - min(qHistory,[],2);
+    [~,order] = sort(jointMotion,'descend');
+    plotJoints = order(1:min(2,n)).';
+
+    if numel(plotJoints) < 2
+        plotJoints = [2 3];
+    end
+
+else
+
+    plotJoints = viz.contourJoints(:).';
+
+end
+
+assert( ...
+    numel(plotJoints) == 2 && ...
+    all(plotJoints >= 1) && ...
+    all(plotJoints <= n) && ...
+    plotJoints(1) ~= plotJoints(2), ...
+    'viz.contourJoints must contain two distinct valid joint indices.');
+
+j1 = plotJoints(1);
+j2 = plotJoints(2);
+
+% The other four joints are fixed at the final valid solution.
+% If the solver did not return a finite final solution, use the last finite
+% point available in the history instead.
+if numel(qSolution) == n && all(isfinite(qSolution))
+
+    qReference = qSolution(:);
+
+elseif ~isempty(qHistory) && all(isfinite(qHistory(:,end)))
+
+    qReference = qHistory(:,end);
+
+else
+
+    qReference = qSeed(:);
+
+end
+
+plotLow = qMin(:);
+plotHigh = qMax(:);
+
+lowInfinite = ~isfinite(plotLow);
+highInfinite = ~isfinite(plotHigh);
+
+plotLow(lowInfinite) = seedLow(lowInfinite);
+plotHigh(highInfinite) = seedHigh(highInfinite);
+
+[j1Low,j1High] = choosePlotRange( ...
+    qHistory(j1,:), ...
+    qSeed(j1), ...
+    qSolution, ...
+    j1, ...
+    plotLow(j1), ...
+    plotHigh(j1));
+
+[j2Low,j2High] = choosePlotRange( ...
+    qHistory(j2,:), ...
+    qSeed(j2), ...
+    qSolution, ...
+    j2, ...
+    plotLow(j2), ...
+    plotHigh(j2));
+
+q1Values = linspace(j1Low,j1High,viz.contourGridSize);
+q2Values = linspace(j2Low,j2High,viz.contourGridSize);
+
+[Q1,Q2] = meshgrid(q1Values,q2Values);
+C = nan(size(Q1));
+
+for r = 1:size(Q1,1)
+
+    for c = 1:size(Q1,2)
+
+        q = qReference;
+        q(j1) = Q1(r,c);
+        q(j2) = Q2(r,c);
+
+        if configurationWithinLimits(q,qMin,qMax)
+
+            C(r,c) = diagnosticPoseCost( ...
+                simRobot, ...
+                thetaOffset, ...
+                TTarget, ...
+                q, ...
+                positionTolerance, ...
+                orientationTolerance);
+
+        end
+
+    end
+
+end
+
+finiteC = C(isfinite(C));
+
+if isempty(finiteC)
+
+    axis off
+    text(0.5,0.5,'No finite contour costs available.', ...
+        'HorizontalAlignment','center');
+    return
+
+end
+
+logC = log10(C + 1e-12);
+
+contourf( ...
+    rad2deg(Q1), ...
+    rad2deg(Q2), ...
+    logC, ...
+    28, ...
+    'LineStyle','none');
+
+hold on
+
+% Overlay the actual joint-history projection onto the selected two joints.
+% Other joints changed during the real IK run, so this path is a projection
+% onto the 2-D slice rather than the exact 6-D objective trajectory.
+plot( ...
+    rad2deg(qHistory(j1,:)), ...
+    rad2deg(qHistory(j2,:)), ...
+    'k.-', ...
+    'LineWidth',1.4, ...
+    'MarkerSize',9, ...
+    'DisplayName','IK iterations');
+
+plot( ...
+    rad2deg(qSeed(j1)), ...
+    rad2deg(qSeed(j2)), ...
+    'ko', ...
+    'MarkerFaceColor','w', ...
+    'MarkerSize',7, ...
+    'DisplayName','Seed');
+
+if numel(qSolution) == n && all(isfinite(qSolution))
+
+    plot( ...
+        rad2deg(qSolution(j1)), ...
+        rad2deg(qSolution(j2)), ...
+        'kp', ...
+        'MarkerFaceColor','w', ...
+        'MarkerSize',10, ...
+        'DisplayName','Returned solution');
+
+end
+
+hold off
+
+cb = colorbar;
+cb.Label.String = 'log_{10}(normalized diagnostic cost)';
+
+xlabel(sprintf('q_%d [deg]',j1));
+ylabel(sprintf('q_%d [deg]',j2));
+grid on
+
+if runPassed
+    statusText = 'PASS';
+else
+    statusText = 'FAIL';
+end
+
+title(sprintf( ...
+    'T%d / %s / %s - q_%d,q_%d slice', ...
+    targetIndex, ...
+    char(seedName), ...
+    statusText, ...
+    j1, ...
+    j2), ...
+    'Interpreter','none');
+
+legend('Location','best');
+
+end
+
+
+%% ========================================================================
+% Local function: choose contour range for one joint
+% ========================================================================
+
+function [low,high] = choosePlotRange( ...
+    qHistoryJoint,qSeedJoint,qSolution,jointIndex,limitLow,limitHigh)
+
+values = qHistoryJoint(isfinite(qHistoryJoint));
+
+if isfinite(qSeedJoint)
+    values(end+1) = qSeedJoint; %#ok<AGROW>
+end
+
+if numel(qSolution) >= jointIndex && isfinite(qSolution(jointIndex))
+    values(end+1) = qSolution(jointIndex); %#ok<AGROW>
+end
+
+if isempty(values)
+
+    center = 0.5 * (limitLow + limitHigh);
+    low = max(limitLow,center - deg2rad(30));
+    high = min(limitHigh,center + deg2rad(30));
+    return
+
+end
+
+valueMin = min(values);
+valueMax = max(values);
+span = valueMax - valueMin;
+
+margin = max(0.20 * span,deg2rad(15));
+
+low = max(limitLow,valueMin - margin);
+high = min(limitHigh,valueMax + margin);
+
+if high - low < deg2rad(10)
+
+    center = 0.5 * (high + low);
+    low = max(limitLow,center - deg2rad(15));
+    high = min(limitHigh,center + deg2rad(15));
+
+end
+
+if high <= low
+
+    low = limitLow;
+    high = limitHigh;
+
+end
+
+end
+
+
+%% ========================================================================
+% Local function: independent diagnostic pose-cost history
+% ========================================================================
+
+function plotCostHistory( ...
+    simRobot, ...
+    thetaOffset, ...
+    TTarget, ...
+    qHistory, ...
+    hasRealHistory, ...
+    positionTolerance, ...
+    orientationTolerance)
+
+if isempty(qHistory)
+
+    axis off
+    text(0.5,0.5,'No joint history available.', ...
+        'HorizontalAlignment','center');
+    return
+
+end
+
+numberOfPoints = size(qHistory,2);
+costHistory = nan(numberOfPoints,1);
+
+for k = 1:numberOfPoints
+
+    q = qHistory(:,k);
+
+    if all(isfinite(q))
+
+        costHistory(k) = diagnosticPoseCost( ...
+            simRobot, ...
+            thetaOffset, ...
+            TTarget, ...
+            q, ...
+            positionTolerance, ...
+            orientationTolerance);
+
+    end
+
+end
+
+iteration = 0:(numberOfPoints - 1);
+plotValues = costHistory;
+
+finitePositive = isfinite(plotValues) & plotValues > 0;
+plotValues(finitePositive) = max(plotValues(finitePositive),1e-16);
+plotValues(plotValues == 0) = 1e-16;
+
+semilogy( ...
+    iteration, ...
+    plotValues, ...
+    '.-', ...
+    'LineWidth',1.4, ...
+    'MarkerSize',10);
+
+grid on
+xlabel('Iteration');
+ylabel('Normalized diagnostic cost');
+
+finiteCost = costHistory(isfinite(costHistory));
+
+if isempty(finiteCost)
+
+    title('Independent pose-cost history');
+
+else
+
+    title(sprintf( ...
+        'Independent pose cost - final %.2e', ...
+        finiteCost(end)));
+
+end
+
+if ~hasRealHistory
+
+    text( ...
+        0.02, ...
+        0.06, ...
+        'qHistory unavailable: seed/final only', ...
+        'Units','normalized', ...
+        'FontWeight','bold');
+
+end
+
+end
+
+
+%% ========================================================================
+% Local function: sigma_min and lambda history
+% ========================================================================
+
+function plotDampingDiagnostics(sigmaHistory,lambdaHistory)
+
+hasSigma = ~isempty(sigmaHistory) && any(isfinite(sigmaHistory));
+hasLambda = ~isempty(lambdaHistory) && any(isfinite(lambdaHistory));
+
+if ~hasSigma && ~hasLambda
+
+    axis off
+    text( ...
+        0.5, ...
+        0.5, ...
+        'No sigmaMinHistory / lambdaHistory available.', ...
+        'HorizontalAlignment','center');
+    return
+
+end
+
+if hasSigma
+
+    yyaxis left
+
+    sigmaPlot = abs(sigmaHistory(:));
+    sigmaPlot(~isfinite(sigmaPlot)) = nan;
+    sigmaPlot(sigmaPlot == 0) = 1e-16;
+
+    semilogy( ...
+        0:(numel(sigmaPlot)-1), ...
+        sigmaPlot, ...
+        '.-', ...
+        'LineWidth',1.3);
+
+    ylabel('sigma_{min}');
+
+end
+
+if hasLambda
+
+    yyaxis right
+
+    lambdaPlot = abs(lambdaHistory(:));
+    lambdaPlot(~isfinite(lambdaPlot)) = nan;
+    lambdaPlot(lambdaPlot == 0) = 1e-16;
+
+    semilogy( ...
+        0:(numel(lambdaPlot)-1), ...
+        lambdaPlot, ...
+        '.-', ...
+        'LineWidth',1.3);
+
+    ylabel('lambda');
+
+end
+
+grid on
+xlabel('Iteration');
+title('ADLS conditioning / damping');
+
+end
+
+
+%% ========================================================================
+% Local function: normalized independent IK diagnostic cost
+% ========================================================================
+
+function cost = diagnosticPoseCost( ...
+    simRobot, ...
+    thetaOffset, ...
+    TTarget, ...
+    q, ...
+    positionTolerance, ...
+    orientationTolerance)
+
+try
+
+    TAchieved = getTransform( ...
+        simRobot, ...
+        q(:) + thetaOffset, ...
+        'TCP');
+
+catch
+
+    cost = nan;
+    return
+
+end
+
+positionError = norm( ...
+    TTarget(1:3,4) - TAchieved(1:3,4));
+
+orientationError = rotationError( ...
+    TTarget(1:3,1:3), ...
+    TAchieved(1:3,1:3));
+
+normalizedPosition = positionError / positionTolerance;
+normalizedOrientation = orientationError / orientationTolerance;
+
+cost = 0.5 * ( ...
+    normalizedPosition^2 + ...
+    normalizedOrientation^2);
+
+end
+
+
+%% ========================================================================
+% Local function: joint-limit check for contour points
+% ========================================================================
+
+function tf = configurationWithinLimits(q,qMin,qMax)
+
+tf = true;
+
+finiteLower = isfinite(qMin);
+finiteUpper = isfinite(qMax);
+
+if any(q(finiteLower) < qMin(finiteLower))
+    tf = false;
+    return
+end
+
+if any(q(finiteUpper) > qMax(finiteUpper))
+    tf = false;
+end
+
+end
+
 
 
 %% ========================================================================

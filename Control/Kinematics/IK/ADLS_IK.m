@@ -1,4 +1,9 @@
-function [qSolution, info] = ADLS_IK(robot, T_B_TCP_target, qSeed)
+function [qSolution, info] = ADLS_IK( ...
+    robot, ...
+    T_B_TCP_target, ...
+    qSeed, ...
+    lambdaMax, ...
+    sigmaThreshold)
 %ADLS_IK Numerical inverse kinematics using Adaptive Damped Least Squares.
 %
 % This implementation uses the adaptive damping law presented by
@@ -54,7 +59,6 @@ stepSize = 0.5;
 %
 %       lambdaDLS -> lambdaMax
 %
-lambdaMax = 0.1;
 
 
 % Singularity-region threshold.
@@ -74,7 +78,15 @@ lambdaMax = 0.1;
 % This is the value used by Yang's robot experiment/simulation.
 % It is NOT yet tuned specifically for our robot.
 
-sigmaThreshold = 0.06;
+%% Optional ADLS parameters
+
+if nargin < 4 || isempty(lambdaMax)
+    lambdaMax = 0.1;
+end
+
+if nargin < 5 || isempty(sigmaThreshold)
+    sigmaThreshold = 1e-4;
+end
 
 
 %% -------------------------------------------------------------
@@ -147,6 +159,10 @@ sigmaMinHistory = nan(maxIterations,1);
 lambdaHistory = nan(maxIterations,1);
 rmsJointUpdateHistory = nan(maxIterations,1);
 
+% Store the complete joint configuration at every IK iteration.
+% Column 1 is the initial seed.
+qHistory = nan(robot.dof, maxIterations + 1);
+qHistory(:,1) = q;
 
 %% =============================================================
 % Iterative IK loop
@@ -197,15 +213,45 @@ for iteration = 1:maxIterations
     %       We want to compare damping strategies,
     %       not change several algorithms at once.
 
-    RError = RTarget * RCurrent';
+%% ---------------------------------------------------------
+% 3. Orientation error using SO(3) logarithm
+% ----------------------------------------------------------
+%
+% Relative rotation from the current TCP orientation to the
+% desired TCP orientation:
+%
+%       RError = RTarget * RCurrent'
+%
+% Because our geometric Jacobian is expressed in the Base frame:
+%
+%       [v_B; omega_B] = J * q_dot
+%
+% we construct the rotational error in the Base frame as well.
+%
+% The SO(3) matrix logarithm gives:
+%
+%       log(RError) = [u_hat] * theta
+%
+% where:
+%
+%       u_hat = unit rotation axis
+%       theta = required rotation angle [rad]
+%
+% Converting the skew-symmetric matrix to a vector gives:
+%
+%       orientationErrorVector = theta * u_hat
+%
+% Therefore:
+%
+%       norm(orientationErrorVector) = theta
+%
+% unlike the previous formulation, whose magnitude was sin(theta).
 
-    orientationErrorVector = 0.5 * [
-        RError(3,2) - RError(2,3)
-        RError(1,3) - RError(3,1)
-        RError(2,1) - RError(1,2)
-    ];
+RError = RTarget * RCurrent';
 
-    orientationError = norm(orientationErrorVector);
+orientationErrorVector = rotationLogVector(RError);
+
+orientationError = norm(orientationErrorVector);
 
 
     %% ---------------------------------------------------------
@@ -231,8 +277,10 @@ for iteration = 1:maxIterations
             lambdaHistory(1:max(iteration-1,0));
 
         info.rmsJointUpdateHistory = ...
-            rmsJointUpdateHistory(1:max(iteration-1,0));
-
+             rmsJointUpdateHistory(1:max(iteration-1,0));
+         % Complete joint path from seed to converged solution.
+             info.qHistory = ...
+              qHistory(:,1:iteration);
         return
 
     end
@@ -420,6 +468,9 @@ for iteration = 1:maxIterations
     q = min(max(q, qMin), qMax);
 
 
+    % Record the new joint configuration after the update and
+    % joint-limit enforcement.
+    qHistory(:,iteration + 1) = q;
     %% ---------------------------------------------------------
     % 14. Store ADLS diagnostics
     % ----------------------------------------------------------
@@ -457,4 +508,186 @@ info.lambdaHistory = ...
 info.rmsJointUpdateHistory = ...
     rmsJointUpdateHistory(1:maxIterations);
 
+% Initial seed + all 1000 attempted updates.
+info.qHistory = ...
+    qHistory(:,1:maxIterations + 1);
+
 end
+
+function rotationVector = rotationLogVector(R)
+%ROTATIONLOGVECTOR SO(3) logarithm expressed as a 3x1 rotation vector.
+%
+% Input:
+%   R              - 3x3 rotation matrix
+%
+% Output:
+%   rotationVector - theta * axis, 3x1 [rad]
+%
+% The returned vector is the vector form of:
+%
+%       log(R) = [axis] * theta
+%
+% Therefore:
+%
+%       norm(rotationVector) = theta
+%
+% where theta is the shortest rotation angle in [0, pi].
+%
+% This implementation follows the SO(3) matrix-logarithm formulation
+% described in Modern Robotics by Lynch and Park.
+%
+% Special handling is required near theta = pi because:
+%
+%       sin(pi) = 0
+%
+% so the ordinary expression
+%
+%       theta/(2*sin(theta)) * (R - R')
+%
+% becomes numerically singular.
+
+
+%% -------------------------------------------------------------
+% Calculate rotation angle
+% --------------------------------------------------------------
+
+cosTheta = (trace(R) - 1) / 2;
+
+% Floating-point roundoff may make cosTheta slightly larger than 1
+% or slightly smaller than -1.
+cosTheta = max(-1, min(1, cosTheta));
+
+theta = acos(cosTheta);
+
+
+%% -------------------------------------------------------------
+% Case 1: Rotation is essentially zero
+% -------------------------------------------------------------
+%
+% If theta ~= 0:
+%
+%       log(I) = 0
+%
+% so there is no rotational correction required.
+
+smallAngleTolerance = 1e-8;
+
+if theta < smallAngleTolerance
+
+    rotationVector = zeros(3,1);
+
+    return
+
+end
+
+
+%% -------------------------------------------------------------
+% Case 2: Rotation is close to 180 degrees
+% -------------------------------------------------------------
+%
+% The usual formula contains:
+%
+%       1 / sin(theta)
+%
+% which is numerically problematic near:
+%
+%       theta = pi
+%
+% We therefore extract the rotation axis directly from the
+% rotation matrix, following the special pi-case used in the
+% Modern Robotics MatrixLog3 algorithm.
+
+piTolerance = 1e-6;
+
+if abs(pi - theta) < piTolerance
+
+    if (1 + R(3,3)) > smallAngleTolerance
+
+        axis = ...
+            1 / sqrt(2 * (1 + R(3,3))) * [
+                R(1,3)
+                R(2,3)
+                1 + R(3,3)
+            ];
+
+    elseif (1 + R(2,2)) > smallAngleTolerance
+
+        axis = ...
+            1 / sqrt(2 * (1 + R(2,2))) * [
+                R(1,2)
+                1 + R(2,2)
+                R(3,2)
+            ];
+
+    else
+
+        axis = ...
+            1 / sqrt(2 * (1 + R(1,1))) * [
+                1 + R(1,1)
+                R(2,1)
+                R(3,1)
+            ];
+
+    end
+
+    % Numerical protection.
+    axis = axis / norm(axis);
+
+    rotationVector = theta * axis;
+
+    return
+
+end
+
+
+%% -------------------------------------------------------------
+% Case 3: General rotation
+% -------------------------------------------------------------
+%
+% For:
+%
+%       0 < theta < pi
+%
+% the SO(3) logarithm is:
+%
+%       log(R) =
+%
+%       theta
+%       ---------------- * (R - R')
+%       2*sin(theta)
+%
+% This produces:
+%
+%       [axis] * theta
+
+so3Matrix = ...
+    theta / (2 * sin(theta)) * ...
+    (R - R');
+
+
+%% -------------------------------------------------------------
+% Convert skew-symmetric matrix to vector
+% -------------------------------------------------------------
+%
+% If:
+%
+%       [w] =
+%
+%       [  0   -w3   w2
+%         w3    0   -w1
+%        -w2   w1    0 ]
+%
+% then:
+%
+%       w = [ [w](3,2)
+%             [w](1,3)
+%             [w](2,1) ]
+
+rotationVector = [
+    so3Matrix(3,2)
+    so3Matrix(1,3)
+    so3Matrix(2,1)
+];
+
+end
+
