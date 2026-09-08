@@ -124,8 +124,8 @@ seedQuarterHigh = seedLow + 0.75*(seedHigh-seedLow);
 
 %% 5. Acceptance tolerances
 
-positionTolerance = 2e-6;      % m
-orientationTolerance = 2e-6;   % rad
+positionTolerance = 1e-4;      % m  - match controlIK
+orientationTolerance = 1e-4;   % rad - match controlIK
 
 %% 6. Deterministic random generator
 
@@ -157,6 +157,7 @@ PositionError_m = inf(totalRuns,1);
 OrientationError_rad = inf(totalRuns,1);
 WithinLimits = false(totalRuns,1);
 FiniteSolution = false(totalRuns,1);
+Singular = false(totalRuns,1);
 Pass = false(totalRuns,1);
 
 solutionStore = nan(n,numberOfSeeds,numberOfTargets);
@@ -246,6 +247,9 @@ for targetIndex = 1:numberOfTargets
 
         end
 
+        % Check whether the returned configuration is singular.
+        Singular(row) = singularityCheck(robot, qSolution);
+
         % Independently evaluate returned solution using Simulation.
         TAchieved = getTransform( ...
             simRobot, ...
@@ -267,14 +271,16 @@ for targetIndex = 1:numberOfTargets
             Converged(row) && ...
             FiniteSolution(row) && ...
             WithinLimits(row) && ...
-            PositionError_m(row) < positionTolerance && ...
-            OrientationError_rad(row) < orientationTolerance;
+            ~Singular(row) && ...
+            PositionError_m(row) <= positionTolerance && ...
+            OrientationError_rad(row) <= orientationTolerance;
 
-        fprintf('%s | iter %4d | pos %.2e m | ori %.2e rad\n', ...
+        fprintf('%s | iter %4d | pos %.2e m | ori %.2e rad | singular %s\n', ...
             passFail(Pass(row)), ...
             Iterations(row), ...
             PositionError_m(row), ...
-            OrientationError_rad(row));
+            OrientationError_rad(row), ...
+            yesNo(Singular(row)));
 
     end
 
@@ -291,6 +297,7 @@ resultsTable = table( ...
     OrientationError_rad, ...
     WithinLimits, ...
     FiniteSolution, ...
+    Singular, ...
     Pass);
 
 fprintf('\n============================================================\n');
@@ -358,6 +365,7 @@ fprintf('============================================================\n');
 fprintf('Total runs: %d\n',totalRuns);
 fprintf('Converged: %d / %d\n',sum(Converged),totalRuns);
 fprintf('Within limits: %d / %d\n',sum(WithinLimits),totalRuns);
+fprintf('Non-singular: %d / %d\n',sum(~Singular & FiniteSolution),totalRuns);
 fprintf('Overall PASS: %d / %d\n',sum(Pass),totalRuns);
 
 finitePos = PositionError_m(isfinite(PositionError_m));
@@ -410,6 +418,16 @@ if tf
     txt = 'PASS';
 else
     txt = 'FAIL';
+end
+
+end
+
+function txt = yesNo(tf)
+
+if tf
+    txt = 'YES';
+else
+    txt = 'NO';
 end
 
 end
