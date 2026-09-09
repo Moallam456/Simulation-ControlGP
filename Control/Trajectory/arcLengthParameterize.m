@@ -12,6 +12,7 @@ function [resampledPath, sOriginal, sNew] = ...
 %   sNew          - arc-length locations of new samples
 
     %% Validate inputs
+    
 
     if size(pathPoints,1) ~= 3
         error('pathPoints must be a 3xN matrix.');
