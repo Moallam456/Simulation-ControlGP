@@ -1,0 +1,639 @@
+function [Q, info] = analyticalIK_CAD(T0TCP, L, opts)
+% ANALYTICALIK_CAD
+% Exact inverse-kinematics reduction for the 6R robot defined by the CAD
+% joint-axis directions and the modified-DH model below.
+%
+% Frame 0 is the fixed base frame. It is NOT a joint.
+%
+% Modified-DH convention used:
+%   A_i = Rx(alpha_{i-1}) * Tx(a_{i-1}) * Rz(q_i) * Tz(d_i)
+%
+% Model:
+%   i    a_{i-1}      alpha_{i-1}    d_i
+%   1       0              0          l1
+%   2       l3           -pi/2        l2
+%   3       l4             0           0
+%   4       l6           -pi/2        l5
+%   5       0            +pi/2      l7+l8
+%   6       0            -pi/2         0
+%
+% Fixed TCP:
+%   T_6_TCP = Tz(l9+l10)
+%
+% IMPORTANT:
+% Because d5 = l7+l8 is retained, joints 4-6 are an offset wrist rather
+% than a zero-offset spherical wrist. The arm and wrist are reduced
+% analytically; one scalar closure equation in q6 is solved with a
+% one-dimensional root search. This preserves every stated offset instead
+% of silently deleting l7+l8.
+%
+% INPUTS
+%   T0TCP : 4x4 desired base-to-TCP homogeneous transform.
+%
+%   L     : either a structure with fields
+%             L.l1, ..., L.l10
+%           or a numeric vector
+%             [l1 l2 ... l10]
+%
+%   opts  : optional structure
+%           .nScan        default 2880
+%                         Number of q6 intervals over [-pi,pi].
+%           .rootTol      default 1e-10
+%           .sampleTol    default 1e-3
+%                         Threshold used to look for tangent roots.
+%           .fkPosTol     default 1e-7*max(1,sum(abs(lengths)))
+%           .fkRotTol     default 1e-7 rad
+%           .qSeed        optional 1x6 or 6x1 seed. Returned solutions
+%                         are sorted by wrapped joint distance to qSeed.
+%
+% OUTPUTS
+%   Q     : N-by-6 matrix. Each row is [q1 q2 q3 q4 q5 q6] in radians.
+%
+%   info  : diagnostics including FK validation errors.
+%
+% This file intentionally has no Robotics System Toolbox dependency.
+
+    if nargin < 3 || isempty(opts)
+        opts = struct();
+    end
+
+    ell = unpackLengths(L);
+    l1  = ell(1);
+    l2  = ell(2);
+    l3  = ell(3);
+    l4  = ell(4);
+    l5  = ell(5);
+    l6  = ell(6);
+    l7  = ell(7);
+    l8  = ell(8);
+    l9  = ell(9);
+    l10 = ell(10);
+
+    if ~isequal(size(T0TCP), [4 4]) || any(~isfinite(T0TCP(:)))
+        error('T0TCP must be a finite 4x4 homogeneous transformation.');
+    end
+
+    if norm(T0TCP(4,:) - [0 0 0 1], 2) > 1e-10
+        error('The last row of T0TCP must be [0 0 0 1].');
+    end
+
+    R = T0TCP(1:3,1:3);
+    p = T0TCP(1:3,4);
+
+    if norm(R.'*R - eye(3), 'fro') > 1e-6 || det(R) < 0
+        error('T0TCP(1:3,1:3) must be a proper rotation matrix.');
+    end
+
+    if abs(l4) < eps || hypot(l5,l6) < eps
+        error('Degenerate arm geometry: l4 and hypot(l5,l6) must be nonzero.');
+    end
+
+    nScan     = getOpt(opts, 'nScan', 2880);
+    rootTol   = getOpt(opts, 'rootTol', 1e-10);
+    sampleTol = getOpt(opts, 'sampleTol', 1e-3);
+    fkPosTol  = getOpt(opts, 'fkPosTol', 1e-7*max(1,sum(abs(ell))));
+    fkRotTol  = getOpt(opts, 'fkRotTol', 1e-7);
+
+    if nScan < 180 || nScan ~= floor(nScan)
+        error('opts.nScan must be an integer >= 180.');
+    end
+
+    d5    = l7 + l8;
+    dTool = l9 + l10;
+
+    % Remove only the fixed TCP translation. Frame 6 and frame 5 origins
+    % coincide because d6 = 0 and a5 = 0.
+    p6 = p - dTool*R(:,3);
+
+    qGrid = linspace(-pi, pi, nScan+1);
+    rootRows = zeros(0,3); % [q6, radialSign, elbowSign]
+
+    radialSigns = [1 -1];
+    elbowSigns  = [1 -1];
+
+    % ------------------------------------------------------------------
+    % Solve the single offset-wrist closure equation.
+    % ------------------------------------------------------------------
+    for ir = 1:numel(radialSigns)
+        rs = radialSigns(ir);
+
+        for ie = 1:numel(elbowSigns)
+            es = elbowSigns(ie);
+
+            f = nan(size(qGrid));
+
+            for k = 1:numel(qGrid)
+                f(k) = closureResidual(qGrid(k), rs, es, p6, R, ell);
+            end
+
+            valid = isfinite(f);
+
+            for k = 1:nScan
+                qa = qGrid(k);
+                qb = qGrid(k+1);
+
+                fa = f(k);
+                fb = f(k+1);
+
+                % Direct sampled root.
+                if valid(k) && abs(fa) <= rootTol
+                    rootRows = addRoot(rootRows, qa, rs, es);
+                end
+
+                % Ordinary sign-changing root.
+                if valid(k) && valid(k+1) && fa*fb < 0
+                    fun = @(q6) closureResidual(q6, rs, es, p6, R, ell);
+
+                    try
+                        qRoot = fzero(fun, [qa qb], ...
+                            optimset('Display','off','TolX',1e-12));
+                        rootRows = addRoot(rootRows, qRoot, rs, es);
+                    catch
+                        % Ignore a failed bracket. FK validation later
+                        % prevents invalid solutions from escaping.
+                    end
+                end
+
+                % A root can touch zero without changing sign at a
+                % singular/tangent configuration. Refine a local minimum
+                % of |closure| if the sampled value is already small.
+                if k > 1 && k < nScan && valid(k-1) && valid(k) && valid(k+1)
+                    if abs(f(k)) <= abs(f(k-1)) && ...
+                       abs(f(k)) <= abs(f(k+1)) && ...
+                       abs(f(k)) < sampleTol
+
+                        obj = @(q6) safeAbsClosure(q6, rs, es, p6, R, ell);
+
+                        try
+                            [qMin, fMin] = fminbnd(obj, ...
+                                qGrid(k-1), qGrid(k+1), ...
+                                optimset('Display','off','TolX',1e-12));
+
+                            if fMin <= max(100*rootTol, 1e-8)
+                                rootRows = addRoot(rootRows, qMin, rs, es);
+                            end
+                        catch
+                        end
+                    end
+                end
+
+                % At an arm reachability boundary an IK solution can
+                % coincide with the point where this branch appears or
+                % disappears. Locate that boundary separately.
+                if valid(k) ~= valid(k+1)
+                    qBnd = validityBoundary( ...
+                        qa, qb, valid(k), rs, es, p6, R, ell);
+
+                    if isfinite(qBnd)
+                        fBnd = closureResidual(qBnd, rs, es, p6, R, ell);
+
+                        if isfinite(fBnd) && abs(fBnd) < 1e-6
+                            rootRows = addRoot(rootRows, qBnd, rs, es);
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    % ------------------------------------------------------------------
+    % Recover q1...q5 for every q6 closure root, then validate against
+    % the exact same MDH forward model.
+    % ------------------------------------------------------------------
+    Q = zeros(0,6);
+    posErrs = zeros(0,1);
+    rotErrs = zeros(0,1);
+
+    for k = 1:size(rootRows,1)
+        q6Guess = rootRows(k,1);
+        rs      = rootRows(k,2);
+        es      = rootRows(k,3);
+
+        [q, ok] = finishSolution(q6Guess, rs, es, p6, R, ell);
+
+        if ~ok
+            continue;
+        end
+
+        Tcheck = fkExact(q, ell);
+
+        posErr = norm(Tcheck(1:3,4) - p);
+        Rerr = Tcheck(1:3,1:3).' * R;
+        cang = clamp((trace(Rerr)-1)/2, -1, 1);
+        rotErr = acos(cang);
+
+        if posErr > fkPosTol || rotErr > fkRotTol
+            continue;
+        end
+
+        % Remove duplicate joint solutions modulo 2*pi.
+        duplicate = false;
+
+        for j = 1:size(Q,1)
+            dq = wrapPi(q - Q(j,:));
+
+            if norm(dq,2) < 1e-7
+                duplicate = true;
+                break;
+            end
+        end
+
+        if ~duplicate
+            Q(end+1,:) = q; %#ok<AGROW>
+            posErrs(end+1,1) = posErr; %#ok<AGROW>
+            rotErrs(end+1,1) = rotErr; %#ok<AGROW>
+        end
+    end
+
+    % Sort solutions by distance to an optional previous/seed pose.
+    if isfield(opts,'qSeed') && ~isempty(opts.qSeed) && ~isempty(Q)
+        qSeed = opts.qSeed(:).';
+
+        if numel(qSeed) ~= 6
+            error('opts.qSeed must contain six joint angles.');
+        end
+
+        d = wrapPi(Q - qSeed);
+        [~, idx] = sort(sum(d.^2,2));
+
+        Q = Q(idx,:);
+        posErrs = posErrs(idx);
+        rotErrs = rotErrs(idx);
+    end
+
+    info.success = ~isempty(Q);
+    info.numberOfSolutions = size(Q,1);
+    info.positionError = posErrs;
+    info.rotationError = rotErrs;
+    info.p6 = p6;
+    info.rootCandidates = rootRows;
+    info.model = [ ...
+        'Modified DH: Rx(alpha)*Tx(a)*Rz(q)*Tz(d); ', ...
+        'd5=l7+l8; TCP d=l9+l10.' ];
+
+    if isempty(Q)
+        info.message = [ ...
+            'No solution survived the exact FK check. ', ...
+            'Increase opts.nScan if the target is known to be reachable, ', ...
+            'and verify that the FK model uses the same modified-DH convention.' ];
+    else
+        info.message = 'IK solutions found and validated by exact FK.';
+    end
+end
+
+
+% ========================================================================
+% Offset-wrist closure equation
+% ========================================================================
+function f = closureResidual(q6, radialSign, elbowSign, p6, R06, ell)
+    d5 = ell(7) + ell(8);
+
+    % From R_5^6 = Rx(-pi/2)*Rz(q6),
+    % z5 expressed in frame 0 is:
+    %   z5 = -sin(q6)*x6 - cos(q6)*y6.
+    z5 = -sin(q6)*R06(:,1) - cos(q6)*R06(:,2);
+
+    % p6 = p4 + d5*z5
+    p4 = p6 - d5*z5;
+
+    [q123, ok] = solveArmBranch(p4, radialSign, elbowSign, ell);
+
+    if ~ok
+        f = NaN;
+        return;
+    end
+
+    q1 = q123(1);
+    q2 = q123(2);
+    q3 = q123(3);
+
+    s23 = q2 + q3;
+
+    % z4 from the exact modified-DH chain.
+    z4 = [ ...
+        -cos(q1)*sin(s23);
+        -sin(q1)*sin(s23);
+        -cos(s23)];
+
+    % alpha4 = +pi/2 means z4 is perpendicular to z5.
+    f = dot(z4,z5);
+end
+
+
+% ========================================================================
+% Closed-form q1-q3 arm solution for one branch
+% ========================================================================
+function [q123, ok] = solveArmBranch(p4, radialSign, elbowSign, ell)
+    l1 = ell(1);
+    l2 = ell(2);
+    l3 = ell(3);
+    l4 = ell(4);
+    l5 = ell(5);
+    l6 = ell(6);
+
+    x = p4(1);
+    y = p4(2);
+    z = p4(3);
+
+    tol = 1e-10;
+
+    rho2 = x*x + y*y;
+
+    if rho2 < l2*l2 - tol
+        q123 = [NaN NaN NaN];
+        ok = false;
+        return;
+    end
+
+    Aabs = sqrt(max(0, rho2 - l2*l2));
+    A = radialSign*Aabs;
+
+    % No q1+q2 combination: q1 is solved independently.
+    q1 = atan2(y,x) - atan2(l2,A);
+
+    X = A - l3;
+    Z = l1 - z;
+
+    % The l5/l6 offsets combine geometrically into one effective link,
+    % without deleting either length.
+    Le = hypot(l5,l6);
+    delta = atan2(l5,l6);
+
+    r = hypot(X,Z);
+
+    if r < tol
+        q123 = [NaN NaN NaN];
+        ok = false;
+        return;
+    end
+
+    cAlpha = (r*r + l4*l4 - Le*Le)/(2*r*l4);
+    cEta   = (r*r + Le*Le - l4*l4)/(2*r*Le);
+
+    if cAlpha < -1-1e-9 || cAlpha > 1+1e-9 || ...
+       cEta   < -1-1e-9 || cEta   > 1+1e-9
+
+        q123 = [NaN NaN NaN];
+        ok = false;
+        return;
+    end
+
+    cAlpha = clamp(cAlpha,-1,1);
+    cEta   = clamp(cEta,-1,1);
+
+    alpha = acos(cAlpha);
+    eta   = acos(cEta);
+    psi   = atan2(Z,X);
+
+    q2 = psi + elbowSign*alpha;
+
+    % gamma = q2 + q3 + delta.
+    gamma = psi - elbowSign*eta;
+
+    q3 = gamma - delta - q2;
+
+    q123 = wrapPi([q1 q2 q3]);
+    ok = true;
+end
+
+
+% ========================================================================
+% Recover q4-q6 once q1-q3 and the q6 closure root are known
+% ========================================================================
+function [q, ok] = finishSolution(q6Guess, radialSign, elbowSign, p6, R06, ell)
+    d5 = ell(7) + ell(8);
+
+    z5 = -sin(q6Guess)*R06(:,1) - cos(q6Guess)*R06(:,2);
+    p4 = p6 - d5*z5;
+
+    [q123, ok] = solveArmBranch(p4, radialSign, elbowSign, ell);
+
+    if ~ok
+        q = nan(1,6);
+        return;
+    end
+
+    q1 = q123(1);
+    q2 = q123(2);
+    q3 = q123(3);
+
+    % R03 from the exact modified-DH orientation chain.
+    R03 = eye(3);
+    R03 = R03 * mdhRotation(0,          q1);
+    R03 = R03 * mdhRotation(-pi/2,      q2);
+    R03 = R03 * mdhRotation(0,          q3);
+
+    % R04 = R03*Rx(-pi/2)*Rz(q4).
+    B = R03 * rotX3(-pi/2);
+
+    % z5 = -y4 for alpha4 = +pi/2.
+    y4 = -z5;
+    v = B.'*y4;
+
+    % At a valid closure root v(3) is zero and
+    % v = [-sin(q4); cos(q4); 0].
+    if abs(v(3)) > 1e-5 || hypot(v(1),v(2)) < 1e-10
+        q = nan(1,6);
+        ok = false;
+        return;
+    end
+
+    q4 = atan2(-v(1), v(2));
+
+    R04 = B * rotZ3(q4);
+    R46 = R04.' * R06;
+
+    % Exact wrist structure:
+    %
+    % R46 =
+    % [ c5*c6   -c5*s6   -s5
+    %   s6       c6        0
+    %   s5*c6   -s5*s6    c5 ]
+    %
+    q5 = atan2(-R46(1,3), R46(3,3));
+    q6 = atan2( R46(2,1), R46(2,2));
+
+    q = wrapPi([q1 q2 q3 q4 q5 q6]);
+    ok = true;
+end
+
+
+% ========================================================================
+% Exact forward kinematics used to validate every returned IK solution
+% ========================================================================
+function T = fkExact(q, ell)
+    l1  = ell(1);
+    l2  = ell(2);
+    l3  = ell(3);
+    l4  = ell(4);
+    l5  = ell(5);
+    l6  = ell(6);
+    l7  = ell(7);
+    l8  = ell(8);
+    l9  = ell(9);
+    l10 = ell(10);
+
+    T = eye(4);
+
+    T = T * mdhT(0,      0,      q(1), l1);
+    T = T * mdhT(l3,    -pi/2,   q(2), l2);
+    T = T * mdhT(l4,     0,      q(3), 0);
+    T = T * mdhT(l6,    -pi/2,   q(4), l5);
+    T = T * mdhT(0,      pi/2,   q(5), l7+l8);
+    T = T * mdhT(0,     -pi/2,   q(6), 0);
+
+    % Fixed TCP transform.
+    Ttcp = eye(4);
+    Ttcp(3,4) = l9+l10;
+
+    T = T*Ttcp;
+end
+
+
+% ========================================================================
+% Modified-DH transform
+% A = Rx(alpha) * Tx(a) * Rz(theta) * Tz(d)
+% ========================================================================
+function A = mdhT(a, alpha, theta, d)
+    ca = cos(alpha);
+    sa = sin(alpha);
+    ct = cos(theta);
+    st = sin(theta);
+
+    A = [ ...
+        ct,       -st,       0,        a;
+        ca*st,    ca*ct,    -sa,   -d*sa;
+        sa*st,    sa*ct,     ca,    d*ca;
+        0,         0,        0,        1];
+end
+
+
+% ========================================================================
+% Rotation part of the modified-DH transform
+% ========================================================================
+function R = mdhRotation(alpha, theta)
+    R = rotX3(alpha)*rotZ3(theta);
+end
+
+
+function R = rotX3(a)
+    c = cos(a);
+    s = sin(a);
+
+    R = [ ...
+        1  0  0;
+        0  c -s;
+        0  s  c];
+end
+
+
+function R = rotZ3(a)
+    c = cos(a);
+    s = sin(a);
+
+    R = [ ...
+         c -s  0;
+         s  c  0;
+         0  0  1];
+end
+
+
+% ========================================================================
+% Root-search helpers
+% ========================================================================
+function value = safeAbsClosure(q6, rs, es, p6, R06, ell)
+    f = closureResidual(q6, rs, es, p6, R06, ell);
+
+    if isfinite(f)
+        value = abs(f);
+    else
+        value = 1e3;
+    end
+end
+
+
+function qBnd = validityBoundary(qa, qb, validA, rs, es, p6, R06, ell)
+    a = qa;
+    b = qb;
+    va = validA;
+
+    for i = 1:60
+        m = 0.5*(a+b);
+        vm = isfinite(closureResidual(m, rs, es, p6, R06, ell));
+
+        if vm == va
+            a = m;
+        else
+            b = m;
+        end
+    end
+
+    if va
+        qBnd = a;
+    else
+        qBnd = b;
+    end
+end
+
+
+function roots = addRoot(roots, q6, rs, es)
+    q6 = wrapPi(q6);
+
+    for i = 1:size(roots,1)
+        if roots(i,2) == rs && roots(i,3) == es
+            if abs(wrapPi(q6 - roots(i,1))) < 1e-7
+                return;
+            end
+        end
+    end
+
+    roots(end+1,:) = [q6 rs es]; %#ok<AGROW>
+end
+
+
+% ========================================================================
+% Utility functions
+% ========================================================================
+function ell = unpackLengths(L)
+    if isstruct(L)
+        names = {'l1','l2','l3','l4','l5','l6','l7','l8','l9','l10'};
+        ell = zeros(1,10);
+
+        for i = 1:10
+            if ~isfield(L,names{i})
+                error('Missing length field L.%s.', names{i});
+            end
+
+            ell(i) = L.(names{i});
+        end
+
+    elseif isnumeric(L) && numel(L) == 10
+        ell = reshape(double(L),1,10);
+
+    else
+        error('L must be a struct with l1...l10 or a numeric 10-element vector.');
+    end
+
+    if any(~isfinite(ell))
+        error('All link lengths l1...l10 must be finite.');
+    end
+end
+
+
+function v = getOpt(opts, name, defaultValue)
+    if isfield(opts,name) && ~isempty(opts.(name))
+        v = opts.(name);
+    else
+        v = defaultValue;
+    end
+end
+
+
+function y = clamp(x, lo, hi)
+    y = min(max(x,lo),hi);
+end
+
+
+function a = wrapPi(a)
+    a = atan2(sin(a),cos(a));
+end
