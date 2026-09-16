@@ -1,13 +1,15 @@
 function q = random_configuration(robot)
 
-n = size(robot.jointLimits,1);
+% RANDOM_CONFIGURATION Draw one valid random row-vector configuration.
 
-q = zeros(n,1);
+n = robot.structure.dof;
+
+q = zeros(1,n);
 
 for i = 1:n
 
-    qmin = robot.jointLimits(i,1);
-    qmax = robot.jointLimits(i,2);
+    qmin = robot.params.joints.positionLimits(i,1);
+    qmax = robot.params.joints.positionLimits(i,2);
 
     q(i) = qmin + rand*(qmax-qmin);
 
