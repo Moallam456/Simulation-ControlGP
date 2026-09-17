@@ -23,6 +23,8 @@ fprintf('=====================================\n\n');
 
 results.structure = validateStructure(robot);
 results.parameters = validateParameters(robot);
+results.transformChain = validateTransformChain(robot);
+results.massProperties = validateMassProperties(robot);
 results.fkVsRigidBodyTree = validateFKAgainstRigidBodyTree(robot,numTests);
 results.ik = validateIK(robot,numTests);
 results.geometryPropagation = validateGeometryPropagation(robot);
@@ -30,6 +32,8 @@ results.geometryPropagation = validateGeometryPropagation(robot);
 results.success = ...
     results.structure.success && ...
     results.parameters.success && ...
+    results.transformChain.success && ...
+    results.massProperties.success && ...
     results.fkVsRigidBodyTree.success && ...
     results.ik.success && ...
     results.geometryPropagation.success;
@@ -71,6 +75,74 @@ result.success = result.limitsOrdered && ...
     result.homeInsideLimits && result.geometryFinite;
 
 fprintf('Parameters valid: %d\n',result.success);
+
+end
+
+function result = validateTransformChain(robot)
+
+tolerance = 1e-12;
+maxFixedTransformError = 0;
+maxVisualEndpointError = 0;
+
+T = eye(4);
+
+for i = 1:robot.structure.dof
+    T = T * robot.dh.fixedTransforms{i};
+    maxFixedTransformError = max(maxFixedTransformError, ...
+        norm(T - robot.dh.homeFrames{i+1},'fro'));
+
+    if isfield(robot.dh,'visualSegments') && numel(robot.dh.visualSegments) >= i
+        endpointParent = robot.dh.visualSegments{i}(end,:);
+        endpointWorld = transformPoint(robot.dh.homeFrames{i},endpointParent);
+        frameWorld = robot.dh.homeFrames{i+1}(1:3,4).';
+        maxVisualEndpointError = max(maxVisualEndpointError, ...
+            norm(endpointWorld - frameWorld));
+    end
+end
+
+result.maxFixedTransformError = maxFixedTransformError;
+result.maxVisualEndpointError = maxVisualEndpointError;
+result.success = maxFixedTransformError < tolerance && ...
+    maxVisualEndpointError < tolerance;
+
+fprintf('Transform chain consistent: %d\n',result.success);
+fprintf('Visual endpoint max error: %.3e m\n',maxVisualEndpointError);
+
+end
+
+function pointWorld = transformPoint(T,pointLocal)
+
+pointHomogeneous = T * [pointLocal(:); 1];
+pointWorld = pointHomogeneous(1:3).';
+
+end
+
+function result = validateMassProperties(robot)
+
+bodyCount = numel(robot.model.Bodies);
+mass = zeros(bodyCount,1);
+comFinite = true(bodyCount,1);
+inertiaFinite = true(bodyCount,1);
+inertiaNonnegative = true(bodyCount,1);
+
+for i = 1:bodyCount
+    body = robot.model.Bodies{i};
+    mass(i) = body.Mass;
+    comFinite(i) = all(isfinite(body.CenterOfMass));
+    inertiaFinite(i) = all(isfinite(body.Inertia));
+    inertiaNonnegative(i) = all(body.Inertia(1:3) >= 0);
+end
+
+result.positiveMass = all(mass > 0);
+result.finiteCOM = all(comFinite);
+result.finiteInertia = all(inertiaFinite);
+result.nonnegativeInertiaDiagonal = all(inertiaNonnegative);
+result.success = result.positiveMass && ...
+    result.finiteCOM && ...
+    result.finiteInertia && ...
+    result.nonnegativeInertiaDiagonal;
+
+fprintf('Mass properties valid: %d\n',result.success);
 
 end
 

@@ -10,7 +10,8 @@ addpath('Final_Architecture', ...
         'Final_Architecture\kinematics', ...
         'Final_Architecture\visualization', ...
         'Final_Architecture\validation', ...
-        'Final_Architecture\workspace_analysis')
+        'Final_Architecture\workspace_analysis', ...
+        'Final_Architecture\dynamics_analysis')
 
 robot = loadRobot();
 
@@ -96,3 +97,38 @@ workspace = reachable_workspace(robot, 10000);
 
 Generic code outside `robots/` should consume the loaded `robot` interface
 and should not call `robots/initial_trial` files directly.
+
+## Dynamics Analysis
+
+`dynamics_analysis/` contains generic ideal rigid-body joint-side dynamics.
+The fixed tool (2.0 kg) and J6-to-EE structure (0.71 kg) are separate
+component masses combined once in the TCP body. Link and joint-module masses
+are defined in `robotParameters.m`; `buildModel.m` estimates COM and inertia
+from the simplified geometry unless explicit COM/inertia are supplied.
+All current body properties are preliminary estimates. Confirm them against
+CAD, datasheets, and measured properties before actuator selection.
+
+```matlab
+robot = loadRobot();
+validation = validateDynamicModel(robot);
+options = struct('gravity',[0 0 -9.81], 'numSamples',1000, 'seed',1);
+gravityResults = analyzeGravityLoading(robot,options);
+
+scenario.gravity = [0 0 -9.81]; % Base +Z is upward.
+trajectory.time = [0; 1];       % N-by-1, strictly increasing seconds.
+trajectory.q = zeros(2,robot.structure.dof);   % radians
+trajectory.qd = zeros(2,robot.structure.dof);  % rad/s
+trajectory.qdd = zeros(2,robot.structure.dof); % rad/s^2
+results = analyzeTrajectoryDynamics(robot,trajectory,scenario);
+disp(results.summaryTable)
+figures = plotDynamicsResults(results,struct('joint',2));
+```
+
+`results` contains `meta`, `time`, `state.q/qd/qdd`,
+`torque.total/gravity/inertial/velocity/residual`, `power.joint`,
+`torqueSpeed.speed/torque`, `summaryTable`, and `peakEvents`.
+Torque and speed arrays are N-by-DOF. Joint order comes from
+`robot.structure.jointNames`. Gravity is applied to a copy of the model;
+the shared `robot.model` is not changed. The sampled gravity maximum is an
+observed maximum, not a global bound. Run `example_dynamics_workflow()` for
+a full example and `validate_dynamics_analysis(robot)` for numerical checks.

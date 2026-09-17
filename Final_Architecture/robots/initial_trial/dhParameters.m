@@ -3,18 +3,24 @@ function dh = dhParameters(params,structure)
 % DHPARAMETERS Derived kinematic representation for initial_trial.
 %
 % The hand sketch contains compound CAD-style offsets, especially between
-% J3 and J4. For this robot, the authoritative model is therefore a fixed
-% transform chain derived from params.geometry. A reference modified-DH
-% table is retained for documentation and future analytical work, but
-% buildModel uses dh.fixedTransforms.
+% J3 and J4. For this robot, the authoritative kinematic model is therefore
+% the fixed transform chain derived from params.geometry.
 
 validateParams(params,structure);
 
 g = params.geometry;
 
 dh.convention = "fixed_transform_chain";
+dh.authoritativeFields = [
+    "homeFrames"
+    "fixedTransforms"
+    "visualSegments"
+    "toolSegment"];
 dh.referenceConvention = "modified";
 dh.referenceColumns = ["a","alpha","d","thetaOffset"];
+dh.referenceTableIsAuthoritative = false;
+dh.referenceTableNote = ...
+    "Reference only. Do not use for FK/IK while the J3-to-J4 compound offset is modeled as separate X/Y/Z translations.";
 
 dh.referenceTable = [
     0,       0,      g.l1,       0;
@@ -33,8 +39,7 @@ dh.thetaOffset = dh.referenceTable(:,4);
 dh.visualSegments = visualSegments(params);
 dh.toolSegment = [
     0 0 0
-    0 0 g.l9
-    0 0 g.l9 + g.l10];
+    0 0 g.l10];
 
 end
 
@@ -70,7 +75,7 @@ p2 = p1 + [g.l3; 0; g.l2];
 p3 = p2 + [0; 0; g.l4];
 p4 = p3 + [g.l7; g.l5; g.l6];
 p5 = p4 + [g.l8; 0; 0];
-p6 = p5;
+p6 = p5 + [g.l9; 0; 0];
 
 R0 = eye(3);
 R1 = eye(3);
@@ -107,7 +112,7 @@ segments{2} = [0 0 0; 0 0 g.l2; g.l3 0 g.l2];
 segments{3} = [0 0 0; 0 0 g.l4];
 segments{4} = [0 0 0; 0 g.l5 0; 0 g.l5 g.l6; g.l7 g.l5 g.l6];
 segments{5} = [0 0 0; 0 0 g.l8];
-segments{6} = [0 0 0];
+segments{6} = [0 0 0; 0 0 g.l9];
 
 end
 

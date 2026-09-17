@@ -16,16 +16,16 @@ params.version = "v1";
 
 %% Geometry
 
-params.geometry.l1 = 0.525;  % O0 -> O1, base height [m].
+params.geometry.l1 = 0.200;  % O0 -> O1, base height, estimated [m].
 params.geometry.l2 = 0.120;  % O1 -> shoulder offset level, estimated [m].
 params.geometry.l3 = 0.150;  % shoulder horizontal offset to O2 [m].
-params.geometry.l4 = 0.770;  % O2 -> O3 main vertical arm [m].
-params.geometry.l5 = 0.100;  % O3 -> O4 world-Y offset, estimated [m].
-params.geometry.l6 = 0.120;  % O3 -> O4 world-Z offset, estimated [m].
-params.geometry.l7 = 0.160;  % O3 -> O4 world-X offset, estimated [m].
-params.geometry.l8 = 0.740;  % O4 -> O5/O6 major horizontal reach [m].
-params.geometry.l9 = 0.100;  % flange offset, estimated [m].
-params.geometry.l10 = 0.200; % fixed welding tool/TCP offset [m].
+params.geometry.l4 = 0.350;  % J2 -> J3 arm segment [m].
+params.geometry.l5 = 0.040;  % J3 -> J4 world-Y offset, estimated [m].
+params.geometry.l6 = 0.050;  % J3 -> J4 world-Z offset, estimated [m].
+params.geometry.l7 = 0.060;  % J3 -> J4 world-X offset, estimated [m].
+params.geometry.l8 = 0.075;  % J4 -> J5 segment [m].
+params.geometry.l9 = 0.075;  % J5 -> J6 segment [m].
+params.geometry.l10 = 0.050; % J6 -> end-effector segment [m].
 
 %% Joints
 
@@ -44,29 +44,75 @@ params.joints.zeroOffset = zeros(1,6);
 %% Tool
 
 params.tool.name = "TIG_Torch";
-params.tool.mass = 0.8;
+params.tool.mass = 2.0;
+params.tool.segmentMass = 0.71; % J6 -> EE structure, separate from tool mass [kg].
+params.tool.radius = 0.035; % estimated equivalent payload/tool radius [m].
 params.tool.TFlangeTCP = eye(4);
 params.tool.TFlangeTCP(3,4) = ...
-    params.geometry.l9 + params.geometry.l10;
+    params.geometry.l10;
+params.tool.centerOfMass = [0 0 0]; % at TCP for current preliminary payload model.
+params.tool.inertia = NaN(3,3); % optional inertia about tool COM, TCP axes [kg*m^2].
+params.tool.massPropertySource = ...
+    "preliminary welding tool/payload mass, lumped at TCP";
+params.tool.dynamics.status = "estimated";
 
 %% Links
 %
-% Dynamics data is intentionally left unknown until reliable CAD or
-% measurements are available.
+% Segment and joint-module masses are preliminary values provided for
+% dynamics setup. buildModel derives rigidBody COM and inertia from these
+% values and the geometry-derived link segments.
+
+structuralMass = [12.00 10.00 5.00 2.14 1.07 1.07]; % kg
+jointModuleMass = [0 0 3.20 1.50 1.50 1.00]; % kg
+linkMass = structuralMass + jointModuleMass;
+
+linkRadius = [0.055 0.050 0.040 0.035 0.030 0.026]; % m, estimated
+jointRadius = [0.070 0.065 0.048 0.042 0.036 0.032]; % m, estimated
+
+linkColor = [
+    0.15 0.15 0.15
+    0.95 0.78 0.05
+    0.95 0.78 0.05
+    0.95 0.78 0.05
+    0.95 0.78 0.05
+    0.20 0.20 0.20];
 
 for i = 1:6
-    params.links(i).mass = NaN;
+    params.links(i).mass = linkMass(i);
+    params.links(i).structuralMass = structuralMass(i);
+    params.links(i).jointModuleMass = jointModuleMass(i);
+    params.links(i).radius = linkRadius(i);
+    params.links(i).jointRadius = jointRadius(i);
+    params.links(i).color = linkColor(i,:);
     params.links(i).centerOfMass = [NaN NaN NaN];
     params.links(i).inertia = NaN(3,3);
+    params.links(i).massPropertySource = ...
+        "preliminary segment and joint-module masses, simplified geometry inertia";
+    params.links(i).dynamics.status = "estimated";
 end
+
+params.dynamics.horizontalReferenceFrame = ...
+    "COM distances measured from J2 with the arm completely horizontal.";
+params.dynamics.geometryChecks.j3ToJ4OffsetPathLength = ...
+    params.geometry.l5 + params.geometry.l6 + params.geometry.l7;
+params.dynamics.geometryChecks.j3ToJ4ProvidedLength = 0.150;
+params.dynamics.provisionalMasses = [
+    struct("body","link_1","reason","estimated base/J1 assembly mass")
+    struct("body","link_2","reason","estimated J2 shoulder support mass")];
+
+% Source measurements (horizontal J2 reference) are retained as notes. The
+% geometry and component masses above are the single numerical source.
+params.dynamics.horizontalComFromJ2 = [0.175 0.425 0.5375 0.6125 0.675];
 
 %% Notes
 
 params.notes.missingData = [
-    "Replace estimated l2, l5, l6, and l7 with CAD measurements."
-    "Confirm whether O4-to-wrist length is exactly l8."
-    "Split l9 and l10 into flange and tool lengths from CAD."
+    "Replace estimated l1 and l2 with CAD measurements."
+    "Confirm the estimated J3-to-J4 offset split l5/l6/l7; the current path length sums to 150 mm."
+    "Replace provisional link_1 and link_2 masses with measured base/J1/J2 assembly masses."
+    "Confirm final radii and physical shape for each simplified cylinder."
     "Confirm exact positive joint directions from CAD."
-    "Add masses, centers of mass, inertias, actuator data, and collision geometry."];
+    "Replace simplified inertias with CAD-derived inertias when available."
+    "Add actuator data and final collision geometry."];
 
 end
