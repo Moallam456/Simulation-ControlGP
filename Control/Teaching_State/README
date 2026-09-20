@@ -1,0 +1,89 @@
+# Modular STM32 Teaching State
+
+This module implements the editable Teaching state for a multi-segment robot
+program. It uses fixed-size storage, no heap allocation, no STM32 HAL calls and
+no MATLAB dependencies.
+
+## Ownership boundary
+
+- `TeachingState` owns the editable state, working segment and draft program.
+- `TeachingInputs` is a coherent read-only snapshot owned by motion, safety,
+  drive, kinematics and configuration modules.
+- `TeachingOutputs` provides HMI information and a one-cycle validation request.
+- Path Validation—not Teaching—runs geometry generation, arc-length
+  parameterization, time scaling, IK, FK checking, limits and collision checks.
+
+For a recorded line, Path Validation maps:
+
+```text
+P_start        = segment.points[0].position_m
+P_end          = segment.points[1].position_m
+R_start/end    = quaternion-derived orientations
+desired speed  = segment.speed_mps * program.global_speed_scale
+initial IK seed= segment.points[0].joint_position_rad
+```
+
+That interface is compatible with the conceptual inputs of the MATLAB line
+trajectory pipeline without embedding the pipeline inside this state.
+
+## Reset semantics
+
+`TEACH_EVENT_RESET` immediately erases the RAM draft and working segment. It:
+
+- requires no confirmation;
+- does not command motion or homing;
+- does not clear E-stop, protective-stop or global fault ownership;
+- increments the draft revision so an older validation result cannot match.
+
+The operational Reset HMI input must not be connected directly to the STM32
+`NRST` pin. It must arrive as a debounced, edge-triggered software event.
+
+## Debug output
+
+For a desktop test:
+
+```sh
+cc -std=c11 -Wall -Wextra -Werror -pedantic \
+  -DTEACHING_DEBUG_ENABLE=1 \
+  teaching_state.c teaching_state_test.c -lm -o teaching_state_test
+./teaching_state_test
+```
+
+For STM32, define `TEACHING_DEBUG_PRINTF` as the project logger before including
+`teaching_debug.h`. Prefer buffered UART DMA, SWO/ITM or SEGGER RTT. Disable
+debug logs in the real-time release build.
+
+## Integration loop
+
+1. Debounce the physical/HMI inputs and create one edge-triggered event.
+2. Build one coherent `TeachingInputs` snapshot.
+3. Call `TeachingState_ProcessEvent()` from the supervisory task—not an ISR.
+4. Translate `status_message_id` into Arabic or English in the HMI module.
+5. When `validation_request` pulses, deep-copy or transfer the frozen draft to
+   Path Validation and transition out of Teaching.
+
+The caller should serialize access if the two STM32H745 cores can access the
+same draft. A single owner core plus mailbox/message passing is preferred over
+both cores writing the structure.
+
+## Suggested STM32 project placement
+
+```text
+Core/Inc/teaching_state.h
+Core/Inc/teaching_state_types.h
+Core/Inc/teaching_debug.h
+Core/Src/teaching_state.c
+```
+
+`stm32_integration_example.c` is deliberately excluded with `#if 0`; it shows
+the supervisory-task connection points without assuming a particular HAL,
+RTOS, HMI transport or dual-core allocation.
+
+## Design references
+
+- Existing project trajectory implementation:
+  <https://github.com/Moallam456/Simulation-ControlGP/tree/main/Control/Trajectory>
+- STM32H745/755 reference manual (dual-core architecture and HSEM):
+  <https://www.st.com/resource/en/reference_manual/rm0399-stm32h745755-and-stm32h747757-advanced-armbased-32bit-mcus-stmicroelectronics.pdf>
+- STM32H745xI/G datasheet:
+  <https://www.st.com/resource/en/datasheet/stm32h745ii.pdf>
