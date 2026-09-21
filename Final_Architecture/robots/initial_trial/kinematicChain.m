@@ -1,43 +1,25 @@
-function dh = dhParameters(params,structure)
+function chain = kinematicChain(params,structure)
 
-% DHPARAMETERS Derived kinematic representation for initial_trial.
+% KINEMATICCHAIN Fixed joint placements and visual segments for initial_trial.
 %
-% The hand sketch contains compound CAD-style offsets, especially between
-% J3 and J4. For this robot, the authoritative kinematic model is therefore
-% the fixed transform chain derived from params.geometry.
+% Home frames describe the joint locations and orientations at q = 0.
+% Each fixed transform places a joint relative to its parent; joint motion
+% is applied separately about the axis in robotStructure.
 
 validateParams(params,structure);
 
 g = params.geometry;
 
-dh.convention = "fixed_transform_chain";
-dh.authoritativeFields = [
-    "homeFrames"
-    "fixedTransforms"
-    "visualSegments"
-    "toolSegment"];
-dh.referenceConvention = "modified";
-dh.referenceColumns = ["a","alpha","d","thetaOffset"];
-dh.referenceTableIsAuthoritative = false;
-dh.referenceTableNote = ...
-    "Reference only. Do not use for FK/IK while the J3-to-J4 compound offset is modeled as separate X/Y/Z translations.";
-
-dh.referenceTable = [
-    0,       0,      g.l1,       0;
-    g.l3,   -pi/2,  g.l2,   -pi/2;
-    g.l4,   0,      0,       pi/2;
-    g.l7,   0,      g.l6,       0;
-    g.l8,   0,      g.l5,       0;
-    0,      -pi/2,  0,          0];
-
-dh.a = dh.referenceTable(:,1);
-dh.alpha = dh.referenceTable(:,2);
-dh.d = dh.referenceTable(:,3);
-dh.thetaOffset = dh.referenceTable(:,4);
-
-[dh.homeFrames, dh.fixedTransforms] = homeTransforms(params);
-dh.visualSegments = visualSegments(params);
-dh.toolSegment = [
+chain.convention = "fixed_transform_chain";
+[chain.homeFrames, chain.fixedTransforms] = homeTransforms(params);
+chain.visualSegments = visualSegments(params);
+chain.baseSegment = chain.visualSegments{1};
+chain.bodySegments = cell(1,structure.dof);
+for i = 1:structure.dof-1
+    chain.bodySegments{i} = chain.visualSegments{i+1};
+end
+chain.bodySegments{end} = [0 0 0];
+chain.toolSegment = [
     0 0 0
     0 0 g.l10];
 

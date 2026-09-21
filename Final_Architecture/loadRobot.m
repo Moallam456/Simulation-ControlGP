@@ -30,8 +30,8 @@ if isempty(params)
 end
 
 structure = callInRobotFolder(robotFolder,"robotStructure");
-dh = callInRobotFolder(robotFolder,"dhParameters",params,structure);
-model = callInRobotFolder(robotFolder,"buildModel",params,structure,dh);
+chain = callInRobotFolder(robotFolder,"kinematicChain",params,structure);
+model = callInRobotFolder(robotFolder,"buildModel",params,structure,chain);
 
 actuation = callInFolderIfFileExists( ...
     fullfile(robotFolder,'actuation'), ...
@@ -43,17 +43,22 @@ collision = callInFolderIfFileExists( ...
     fullfile(robotFolder,'collision'), ...
     'collisionGeometry.m', ...
     "collisionGeometry", ...
-    params,structure,dh);
+    params,structure,chain);
+
+gravityPoses = callInFolderIfFileExists( ...
+    robotFolder,'gravityCandidatePoses.m', ...
+    "gravityCandidatePoses",params,structure);
 
 robot.id = robotID;
 robot.paths.root = rootDir;
 robot.paths.robotFolder = robotFolder;
 robot.params = params;
 robot.structure = structure;
-robot.dh = dh;
+robot.chain = chain;
 robot.model = model;
 robot.actuation = actuation;
 robot.collision = collision;
+robot.gravityPoses = gravityPoses;
 robot.solveIK = @(targetPose,varargin) solveIK( ...
     robotFolder,targetPose,robot,varargin{:});
 
@@ -121,7 +126,7 @@ end
 
 solutions = callInRobotFolder( ...
     robotFolder, ...
-    "inverseKinematics", ...
+    "solveInverseKinematics", ...
     targetPose,robot,options);
 
 end

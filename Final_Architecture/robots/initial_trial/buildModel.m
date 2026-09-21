@@ -1,4 +1,4 @@
-function model = buildModel(params,structure,dh)
+function model = buildModel(params,structure,chain)
 
 % BUILDMODEL Build the initial_trial rigidBodyTree.
 %
@@ -7,9 +7,15 @@ function model = buildModel(params,structure,dh)
 
 model = rigidBodyTree( ...
     'DataFormat','row', ...
-    'MaxNumBodies',structure.dof + 1);
+    'MaxNumBodies',structure.dof + 2);
 
-parentName = structure.frames.base;
+baseBody = rigidBody(char(structure.frames.baseStructure));
+baseJoint = rigidBodyJoint('base_fixed','fixed');
+setFixedTransform(baseJoint,eye(4));
+baseBody.Joint = baseJoint;
+baseBody = assignBaseProperties(baseBody,params,chain);
+addBody(model,baseBody,char(structure.frames.base));
+parentName = structure.frames.baseStructure;
 
 for i = 1:structure.dof
 
@@ -18,7 +24,7 @@ for i = 1:structure.dof
         char(structure.jointNames(i)), ...
         char(structure.jointTypes(i)));
 
-    setFixedTransform(joint,dh.fixedTransforms{i});
+    setFixedTransform(joint,chain.fixedTransforms{i});
     joint.JointAxis = structure.jointAxes(i,:);
     joint.HomePosition = params.joints.homePosition(i);
     joint.PositionLimits = params.joints.positionLimits(i,:);
@@ -26,8 +32,8 @@ for i = 1:structure.dof
     body.Joint = joint;
 
     if isfield(params,'links') && numel(params.links) >= i
-        body = assignMassProperties(body,params.links(i),dh,i);
-        body = addSimplifiedGeometry(body,params.links(i),dh,i);
+        body = assignMassProperties(body,params.links(i),chain,i);
+        body = addSimplifiedGeometry(body,params.links(i),chain,i);
     end
 
     addBody(model,body,char(parentName));
@@ -45,11 +51,33 @@ addBody(model,tcpBody,char(structure.frames.flange));
 
 end
 
-function body = assignMassProperties(body,linkParams,dh,linkIndex)
+function body = assignBaseProperties(body,params,chain)
+
+mass = params.base.mass;
+radius = params.base.radius;
+points = chain.baseSegment;
+length = norm(points(end,:) - points(1,:));
+if ~isscalar(mass) || ~isfinite(mass) || mass <= 0 || ...
+        ~isscalar(radius) || ~isfinite(radius) || radius <= 0 || length <= 0
+    error('buildModel:InvalidBase','Fixed base needs positive mass, radius, and length.');
+end
+body.Mass = mass;
+body.CenterOfMass = mean(points,1);
+I = cylinderInertiaAboutCenter(mass,radius,length, ...
+    points(end,:) - points(1,:));
+I = inertiaAtBodyOrigin(I,mass,body.CenterOfMass);
+body.Inertia = [I(1,1) I(2,2) I(3,3) I(2,3) I(1,3) I(1,2)];
+T = cylinderTransform(points(1,:),points(end,:));
+body = tryAddVisual(body,"Cylinder",[radius length],T,[0.15 0.15 0.15]);
+body = tryAddCollision(body,"Cylinder",[radius length],T);
+
+end
+
+function body = assignMassProperties(body,linkParams,chain,linkIndex)
 
 if ~isfield(linkParams,'mass') || ~isscalar(linkParams.mass) || ...
-        ~isfinite(linkParams.mass) || linkParams.mass <= 0
-    error('buildModel:MissingLinkMass','Link %d needs a positive mass.',linkIndex);
+        ~isfinite(linkParams.mass) || linkParams.mass < 0
+    error('buildModel:MissingLinkMass','Link %d needs nonnegative mass.',linkIndex);
 end
 body.Mass = linkParams.mass;
 if ~isfield(linkParams,'structuralMass') || ...
@@ -58,6 +86,15 @@ if ~isfield(linkParams,'structuralMass') || ...
     error('buildModel:MassMismatch', ...
         'Link %d mass must equal structuralMass + jointModuleMass.',linkIndex);
 end
+if body.Mass == 0
+    if linkIndex ~= numel(chain.bodySegments)
+        error('buildModel:UnexpectedMasslessLink', ...
+            'Only the J6 frame may have zero mass.');
+    end
+    body.CenterOfMass = [0 0 0];
+    body.Inertia = zeros(1,6);
+    return;
+end
 
 if hasKnownMassProperties(linkParams)
     body.CenterOfMass = linkParams.centerOfMass;
@@ -65,6 +102,7 @@ if hasKnownMassProperties(linkParams)
     if norm(I-I.','fro') > 1e-10*max(1,norm(I,'fro'))
         error('buildModel:AsymmetricInertia','Link %d inertia must be symmetric.',linkIndex);
     end
+    I = inertiaAtBodyOrigin(I,body.Mass,body.CenterOfMass);
     body.Inertia = [I(1,1) I(2,2) I(3,3) I(2,3) I(1,3) I(1,2)];
     return;
 end
@@ -72,10 +110,11 @@ end
 if isfield(linkParams,'radius') && isfinite(linkParams.radius) && ...
         linkParams.radius > 0
 
-    components = massComponentsInBodyFrame(dh,linkParams,linkIndex);
+    components = massComponentsInBodyFrame(chain,linkParams,linkIndex);
     [com,inertia] = estimateMassProperties(components,linkParams.radius);
 
     body.CenterOfMass = com;
+    inertia = inertiaAtBodyOrigin(inertia,body.Mass,com);
     body.Inertia = [
         inertia(1,1) ...
         inertia(2,2) ...
@@ -152,8 +191,15 @@ d = toolCOM - body.CenterOfMass;
 I = I + toolMass*((d*d.')*eye(3) - d.'*d);
 d = segmentCOM - body.CenterOfMass;
 I = I + segmentMass*((d*d.')*eye(3) - d.'*d);
+I = inertiaAtBodyOrigin(I,body.Mass,body.CenterOfMass);
 body.Inertia = [I(1,1) I(2,2) I(3,3) I(2,3) I(1,3) I(1,2)];
 
+end
+
+function inertiaOrigin = inertiaAtBodyOrigin(inertiaCOM,mass,com)
+% rigidBody.Inertia is about the body-frame origin, not the COM.
+r = com(:);
+inertiaOrigin = inertiaCOM + mass*((r.'*r)*eye(3) - r*r.');
 end
 
 function body = addToolGeometry(body,toolParams)
@@ -184,9 +230,9 @@ body = tryAddCollision(body,"Sphere",1.4*radius,eye(4));
 
 end
 
-function body = addSimplifiedGeometry(body,linkParams,dh,linkIndex)
+function body = addSimplifiedGeometry(body,linkParams,chain,linkIndex)
 
-pointsBody = visualPointsInBodyFrame(dh,linkIndex);
+pointsBody = bodySegmentPoints(chain,linkIndex);
 
 if isfield(linkParams,'radius') && isfinite(linkParams.radius)
     radius = linkParams.radius;
@@ -249,27 +295,18 @@ end
 
 end
 
-function pointsBody = visualPointsInBodyFrame(dh,linkIndex)
+function pointsBody = bodySegmentPoints(chain,linkIndex)
 
-if ~isfield(dh,'visualSegments') || numel(dh.visualSegments) < linkIndex
-    pointsBody = [0 0 0];
-    return;
-end
-
-pointsParent = dh.visualSegments{linkIndex};
-TParentBody = dh.fixedTransforms{linkIndex};
-pointsHomogeneous = [pointsParent ones(size(pointsParent,1),1)];
-pointsBodyHomogeneous = (TParentBody \ pointsHomogeneous.').';
-pointsBody = pointsBodyHomogeneous(:,1:3);
+pointsBody = chain.bodySegments{linkIndex};
 
 end
 
-function components = massComponentsInBodyFrame(dh,linkParams,linkIndex)
+function components = massComponentsInBodyFrame(chain,linkParams,linkIndex)
 
 components = struct('type',{},'mass',{},'radius',{},'pointA',{},'pointB',{},'center',{});
 radius = linkParams.radius;
 
-points = visualPointsInBodyFrame(dh,linkIndex);
+points = bodySegmentPoints(chain,linkIndex);
 
 if isfield(linkParams,'structuralMass') && linkParams.structuralMass > 0
     segments = pointsToSegments(points);

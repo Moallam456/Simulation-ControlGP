@@ -42,12 +42,14 @@ if ~report.tests.limitsValid
     report.errors(end+1) = "Joint limits must be finite and ordered.";
 end
 report.tests.jointOrderMatches = true;
-if numel(model.Bodies) < dof
+movingBodies = model.Bodies(cellfun( ...
+    @(b) ~strcmpi(b.Joint.Type,'fixed'),model.Bodies));
+if numel(movingBodies) ~= dof
     report.tests.jointOrderMatches = false;
 else
     for i = 1:dof
-        if string(model.Bodies{i}.Joint.Name) ~= string(robot.structure.jointNames(i)) || ...
-                strcmpi(model.Bodies{i}.Joint.Type,'fixed')
+        if string(movingBodies{i}.Joint.Name) ~= string(robot.structure.jointNames(i)) || ...
+                string(movingBodies{i}.Name) ~= string(robot.structure.bodyNames(i))
             report.tests.jointOrderMatches = false;
         end
     end
@@ -62,8 +64,14 @@ for i = 1:numel(model.Bodies)
     body = model.Bodies{i};
     name = string(body.Name);
     report.bodyNames(end+1,1) = name;
-    if i <= dof && isfield(robot.params,'links') && numel(robot.params.links) >= i
-        source = robot.params.links(i);
+    linkIndex = find(string(robot.structure.bodyNames(:)) == name,1);
+    if ~isempty(linkIndex) && isfield(robot.params,'links') && ...
+            numel(robot.params.links) >= linkIndex
+        source = robot.params.links(linkIndex);
+        expectedMass = source.mass;
+    elseif isfield(robot.structure.frames,'baseStructure') && ...
+            name == string(robot.structure.frames.baseStructure)
+        source = robot.params.base;
         expectedMass = source.mass;
     elseif isfield(robot.structure,'frames') && ...
             isfield(robot.structure.frames,'endEffector') && ...
@@ -100,13 +108,16 @@ for i = 1:numel(model.Bodies)
         report.tests.massMappingValid = false;
         report.errors(end+1) = name + " mass differs from robot parameters.";
     end
-    if i <= dof && isfield(source,'centerOfMass') && ...
+    if ~isempty(linkIndex) && isfield(source,'centerOfMass') && ...
             isfield(source,'inertia') && numel(source.centerOfMass) == 3 && ...
             isequal(size(source.inertia),[3 3]) && ...
             all(isfinite(source.centerOfMass)) && all(isfinite(source.inertia(:)))
-        expectedI = [source.inertia(1,1) source.inertia(2,2) ...
-            source.inertia(3,3) source.inertia(2,3) ...
-            source.inertia(1,3) source.inertia(1,2)];
+        r = source.centerOfMass(:);
+        Iorigin = source.inertia + body.Mass*( ...
+            (r.'*r)*eye(3) - r*r.');
+        expectedI = [Iorigin(1,1) Iorigin(2,2) ...
+            Iorigin(3,3) Iorigin(2,3) ...
+            Iorigin(1,3) Iorigin(1,2)];
         if norm(body.CenterOfMass(:)-source.centerOfMass(:),Inf) > 1e-10 || ...
                 norm(body.Inertia(:)-expectedI(:),Inf) > 1e-10
             report.tests.massMappingValid = false;
@@ -115,12 +126,19 @@ for i = 1:numel(model.Bodies)
     end
     v = body.Inertia;
     c = body.CenterOfMass;
-    valid = isscalar(body.Mass) && isfinite(body.Mass) && body.Mass > 0 && ...
+    masslessFrame = ~isempty(linkIndex) && linkIndex == dof && ...
+        expectedMass == 0;
+    valid = isscalar(body.Mass) && isfinite(body.Mass) && ...
+        (body.Mass > 0 || masslessFrame) && ...
         numel(c) == 3 && all(isfinite(c)) && numel(v) == 6 && all(isfinite(v));
-    if valid
+    if valid && masslessFrame
+        valid = all(abs(v) < 1e-12) && all(abs(c) < 1e-12);
+    elseif valid
         I = [v(1) v(6) v(5); v(6) v(2) v(4); v(5) v(4) v(3)];
-        e = eig(I);
-        valid = min(e) >= -1e-10*max(1,norm(I,2));
+        r = c(:);
+        Icom = I - body.Mass*((r.'*r)*eye(3) - r*r.');
+        valid = min(eig(I)) >= -1e-10*max(1,norm(I,2)) && ...
+            min(eig(Icom)) >= -1e-10*max(1,norm(Icom,2));
     end
     if ~valid
         report.tests.massPropertiesValid = false;

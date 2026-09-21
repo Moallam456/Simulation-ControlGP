@@ -1,4 +1,4 @@
-function collision = collisionGeometry(params,structure,dh)
+function collision = collisionGeometry(params,structure,chain)
 
 % COLLISIONGEOMETRY Simplified collision geometry for initial_trial.
 %
@@ -8,11 +8,19 @@ function collision = collisionGeometry(params,structure,dh)
 
 collision.available = true;
 collision.source = "estimated cylinders and joint spheres";
-collision.bodyNames = structure.bodyNames;
-collision.homeFrames = dh.homeFrames;
+collision.bodyNames = [structure.frames.baseStructure;structure.bodyNames];
+collision.homeFrames = chain.homeFrames;
 collision.geometry = struct([]);
 
 index = 0;
+
+index = index + 1;
+collision.geometry(index).bodyName = structure.frames.baseStructure;
+collision.geometry(index).type = "cylinder";
+collision.geometry(index).radius = params.base.radius;
+collision.geometry(index).pointA = chain.baseSegment(1,:);
+collision.geometry(index).pointB = chain.baseSegment(end,:);
+collision.geometry(index).frame = "body";
 
 for i = 1:structure.dof
     link = params.links(i);
@@ -29,11 +37,11 @@ for i = 1:structure.dof
         jointRadius = 1.4*radius;
     end
 
-    pointsParent = dh.visualSegments{i};
+    pointsBody = chain.bodySegments{i};
 
-    for j = 1:size(pointsParent,1)-1
-        p1 = pointsParent(j,:);
-        p2 = pointsParent(j+1,:);
+    for j = 1:size(pointsBody,1)-1
+        p1 = pointsBody(j,:);
+        p2 = pointsBody(j+1,:);
 
         if norm(p2 - p1) < 1e-9
             continue;
@@ -45,15 +53,15 @@ for i = 1:structure.dof
         collision.geometry(index).radius = radius;
         collision.geometry(index).pointA = p1;
         collision.geometry(index).pointB = p2;
-        collision.geometry(index).frame = "parent_body";
+        collision.geometry(index).frame = "body";
     end
 
     index = index + 1;
     collision.geometry(index).bodyName = structure.bodyNames(i);
     collision.geometry(index).type = "sphere";
     collision.geometry(index).radius = jointRadius;
-    collision.geometry(index).center = pointsParent(end,:);
-    collision.geometry(index).frame = "parent_body";
+    collision.geometry(index).center = pointsBody(end,:);
+    collision.geometry(index).frame = "body";
 end
 
 if isfield(params,'tool') && isfield(params.tool,'TFlangeTCP')

@@ -14,7 +14,8 @@ gravityOptions.numSamples = 100;
 gravityOptions.seed = 1;
 output.gravity = analyzeGravityLoading(robot,gravityOptions);
 
-% The control team can replace this example with its own q, qd, qdd arrays.
+% 81 time samples: J2 moves from 0 to +20 degrees in four seconds;
+% J1 and J3-J6 stay at home. The control team can supply its own arrays.
 time = linspace(0,4,81).';
 s = time/4;
 blend = 10*s.^3 - 15*s.^4 + 6*s.^5;
@@ -28,6 +29,7 @@ trajectory.time = time;
 trajectory.q = qStart + blend*delta;
 trajectory.qd = blendD*delta;
 trajectory.qdd = blendDD*delta;
+output.inputTrajectory = trajectory;
 output.trajectory = analyzeTrajectoryDynamics(robot,trajectory,scenario);
 disp(output.trajectory.meta.label);
 disp(output.trajectory.summaryTable);

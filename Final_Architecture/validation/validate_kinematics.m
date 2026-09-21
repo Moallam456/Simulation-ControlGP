@@ -46,7 +46,8 @@ end
 
 function result = validateStructure(robot)
 
-expectedBodies = robot.structure.dof + 1;
+expectedBodies = robot.structure.dof + 1 + ...
+    double(isfield(robot.structure.frames,'baseStructure'));
 bodyCount = numel(robot.model.Bodies);
 
 result.bodyCount = bodyCount;
@@ -87,14 +88,14 @@ maxVisualEndpointError = 0;
 T = eye(4);
 
 for i = 1:robot.structure.dof
-    T = T * robot.dh.fixedTransforms{i};
+    T = T * robot.chain.fixedTransforms{i};
     maxFixedTransformError = max(maxFixedTransformError, ...
-        norm(T - robot.dh.homeFrames{i+1},'fro'));
+        norm(T - robot.chain.homeFrames{i+1},'fro'));
 
-    if isfield(robot.dh,'visualSegments') && numel(robot.dh.visualSegments) >= i
-        endpointParent = robot.dh.visualSegments{i}(end,:);
-        endpointWorld = transformPoint(robot.dh.homeFrames{i},endpointParent);
-        frameWorld = robot.dh.homeFrames{i+1}(1:3,4).';
+    if isfield(robot.chain,'visualSegments') && numel(robot.chain.visualSegments) >= i
+        endpointParent = robot.chain.visualSegments{i}(end,:);
+        endpointWorld = transformPoint(robot.chain.homeFrames{i},endpointParent);
+        frameWorld = robot.chain.homeFrames{i+1}(1:3,4).';
         maxVisualEndpointError = max(maxVisualEndpointError, ...
             norm(endpointWorld - frameWorld));
     end
@@ -133,11 +134,15 @@ for i = 1:bodyCount
     inertiaNonnegative(i) = all(body.Inertia(1:3) >= 0);
 end
 
-result.positiveMass = all(mass > 0);
+masslessNames = string(robot.model.BodyNames(mass == 0));
+result.nonnegativeMass = all(mass >= 0);
+result.masslessFrameOnly = isempty(masslessNames) || ...
+    (numel(masslessNames) == 1 && ...
+    masslessNames == string(robot.structure.frames.flange));
 result.finiteCOM = all(comFinite);
 result.finiteInertia = all(inertiaFinite);
 result.nonnegativeInertiaDiagonal = all(inertiaNonnegative);
-result.success = result.positiveMass && ...
+result.success = result.nonnegativeMass && result.masslessFrameOnly && ...
     result.finiteCOM && ...
     result.finiteInertia && ...
     result.nonnegativeInertiaDiagonal;
@@ -181,45 +186,107 @@ end
 
 function result = validateIK(robot,numTests)
 
-positionTolerance = 1e-4;
+positionTolerance = 1e-5;
 orientationTolerance = 1e-4;
-
+limits = robot.params.joints.positionLimits;
+seed = robot.params.joints.homePosition;
+prior = rng;
+restore = onCleanup(@() rng(prior)); %#ok<NASGU>
+rng(1,'twister');
 passed = 0;
 maxPositionError = 0;
 maxOrientationError = 0;
-
 for k = 1:numTests
-    q = random_configuration(robot);
-    TTarget = forward_kinematics(robot,q);
-
-    options.qSeed = q;
-    solutions = robot.solveIK(TTarget,options);
-
-    if ~solutions.info.success
+    target = forward_kinematics(robot,random_configuration(robot));
+    solutions = robot.solveIK(target,struct('qSeed',seed));
+    if ~solutions.valid || size(solutions.q,2)~=robot.structure.dof
         continue;
     end
-
-    TCheck = forward_kinematics(robot,solutions.q(1,:));
-
-    positionError = norm(TTarget(1:3,4) - TCheck(1:3,4));
-    RError = TTarget(1:3,1:3)' * TCheck(1:3,1:3);
-    orientationError = acos(max(min((trace(RError)-1)/2,1),-1));
-
-    maxPositionError = max(maxPositionError,positionError);
-    maxOrientationError = max(maxOrientationError,orientationError);
-
-    if positionError < positionTolerance && orientationError < orientationTolerance
-        passed = passed + 1;
+    allValid = true;
+    distances = vecnorm(solutions.q-seed,2,2);
+    allValid = allValid && all(diff(distances)>=-1e-10) && ...
+        all(all(solutions.q>=limits(:,1).'-1e-9 & ...
+        solutions.q<=limits(:,2).'+1e-9));
+    for i = 1:size(solutions.q,1)
+        achieved = forward_kinematics(robot,solutions.q(i,:));
+        positionError = norm(target(1:3,4)-achieved(1:3,4));
+        RError = target(1:3,1:3).'*achieved(1:3,1:3);
+        orientationError = acos(max(-1,min(1,(trace(RError)-1)/2)));
+        maxPositionError = max(maxPositionError,positionError);
+        maxOrientationError = max(maxOrientationError,orientationError);
+        allValid = allValid && positionError<=positionTolerance && ...
+            orientationError<=orientationTolerance;
+        if i>1
+            allValid = allValid && ...
+                all(vecnorm(solutions.q(1:i-1,:)-solutions.q(i,:),2,2)>=1e-6);
+        end
     end
+    if allValid, passed = passed+1; end
+end
+exampleQ = deg2rad([0 20 -30 0 20 0]);
+examplePose = forward_kinematics(robot,exampleQ);
+example = robot.solveIK(examplePose,struct('qSeed',seed));
+result.multipleSolutionCount = size(example.q,1);
+unreachable = examplePose;
+unreachable(1,4) = unreachable(1,4)+10;
+outside = robot.solveIK(unreachable,struct('qSeed',seed));
+result.unreachableRejected = ~outside.valid && isempty(outside.q);
+halfTurn = examplePose;
+halfTurn(1:3,1:3) = examplePose(1:3,1:3)*diag([-1 -1 1]);
+halfTurnSolutions = robot.solveIK(halfTurn,struct('qSeed',seed));
+result.halfTurnValidated = ~halfTurnSolutions.valid;
+if halfTurnSolutions.valid
+    result.halfTurnValidated = true;
+    for i=1:size(halfTurnSolutions.q,1)
+        achieved = forward_kinematics(robot,halfTurnSolutions.q(i,:));
+        RError = halfTurn(1:3,1:3).'*achieved(1:3,1:3);
+        angleError = acos(max(-1,min(1,(trace(RError)-1)/2)));
+        result.halfTurnValidated = result.halfTurnValidated && ...
+            norm(halfTurn(1:3,4)-achieved(1:3,4))<=positionTolerance && ...
+            angleError<=orientationTolerance;
+    end
+end
+numerical = robot.solveIK(examplePose,struct( ...
+    'qSeed',seed,'method',"numerical",'numStarts',2));
+result.numericalFallbackValid = numerical.valid && ...
+    numerical.info.method=="numerical_multistart";
+if result.numericalFallbackValid
+    numericalPose = forward_kinematics(robot,numerical.q(1,:));
+    result.numericalFallbackValid = ...
+        norm(numericalPose(1:3,4)-examplePose(1:3,4))<=positionTolerance;
+end
+
+generator = analyticalInverseKinematics(robot.model);
+generator.KinematicGroup = struct('BaseName', ...
+    char(robot.structure.frames.base),'EndEffectorBodyName', ...
+    char(robot.structure.frames.endEffector));
+result.wristMetadataCorrect = robot.structure.hasSphericalWrist && ...
+    generator.IsValidGroupForIK;
+
+changedParams = robot.params;
+changedParams.geometry.l2 = changedParams.geometry.l2+0.05;
+changedRobot = loadRobot(robot.id,changedParams);
+changedPose = forward_kinematics(changedRobot,exampleQ);
+changedSolution = changedRobot.solveIK(changedPose,struct('qSeed',seed));
+result.changedGeometryValid = changedSolution.valid;
+if result.changedGeometryValid
+    changedAchieved = forward_kinematics(changedRobot,changedSolution.q(1,:));
+    result.changedGeometryValid = ...
+        norm(changedAchieved(1:3,4)-changedPose(1:3,4))<=positionTolerance;
 end
 
 result.numTests = numTests;
 result.passed = passed;
 result.maxPositionError = maxPositionError;
 result.maxOrientationError = maxOrientationError;
-result.success = passed == numTests;
-
+result.success = passed==numTests && result.multipleSolutionCount>=2 && ...
+    result.unreachableRejected && result.halfTurnValidated && ...
+    result.numericalFallbackValid && ...
+    result.wristMetadataCorrect && ...
+    result.changedGeometryValid;
 fprintf('IK FK-check passed: %d / %d\n',passed,numTests);
+fprintf('IK example solutions: %d; unreachable rejected: %d\n', ...
+    result.multipleSolutionCount,result.unreachableRejected);
 
 end
 

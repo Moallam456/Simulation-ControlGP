@@ -11,7 +11,9 @@ addpath('Final_Architecture', ...
         'Final_Architecture\visualization', ...
         'Final_Architecture\validation', ...
         'Final_Architecture\workspace_analysis', ...
-        'Final_Architecture\dynamics_analysis')
+        'Final_Architecture\dynamics_analysis', ...
+        'Final_Architecture\trajectory', ...
+        'Final_Architecture\actuator_sizing_cases')
 
 robot = loadRobot();
 
@@ -41,7 +43,7 @@ robotA = loadRobot("initial_trial");
 robot.id
 robot.params
 robot.structure
-robot.dh
+robot.chain
 robot.model
 robot.solveIK
 robot.actuation
@@ -58,10 +60,10 @@ The current robot is `initial_trial`.
 robots/initial_trial/
   robotParameters.m
   robotStructure.m
-  dhParameters.m
-  dhTransform.m
+  kinematicChain.m
   buildModel.m
-  inverseKinematics.m
+  solveInverseKinematics.m
+  gravityCandidatePoses.m
   actuation/actuatorParameters.m
   collision/collisionGeometry.m
   CAD/
@@ -73,16 +75,41 @@ joint limits, home position, and tool transform.
 `robotStructure.m` owns topology, names, joint order, joint axes, and frame
 identities.
 
-`dhParameters.m` derives the kinematic representation from parameters. For
-`initial_trial`, the authoritative chain is a fixed-transform chain because
-the hand sketch has compound CAD-style offsets. A reference modified-DH
-table is retained for documentation and future IK work.
-
-`dhTransform.m` is robot-specific and stays beside the robot's DH/IK files.
+`kinematicChain.m` derives the joint home frames, fixed parent-to-joint
+transforms, and visual segments from the dimensions. Joint rotations are
+applied separately about the axes in `robotStructure.m`. The active model
+does not use a DH or modified-DH table.
 
 `buildModel.m` constructs the MATLAB `rigidBodyTree` from supplied
-`params`, `structure`, and `dh`. It does not read robot parameters itself,
+`params`, `structure`, and `chain`. It does not read robot parameters itself,
 which allows parameter sweeps.
+The fixed `base_structure` owns the O0-to-J1 segment; each `link_i` owns
+its outgoing Ji-to-J(i+1) segment, not the segment ending at Ji. The TCP
+body owns the J6-to-TCP structure and tool. The J6 frame has zero mass.
+
+`gravityCandidatePoses.m` defines robot-specific stationary screening poses.
+`loadRobot` exposes these as `robot.gravityPoses`; generic gravity analyses
+include them by default, alongside requested and random configurations.
+
+## Inverse Kinematics
+
+`robot.solveIK(targetPose,struct('qSeed',qStart))` returns the distinct,
+joint-limit-valid configurations it finds for an exact TCP pose in
+`solutions.q` (N-by-DOF, radians). Rows are ordered by joint-space distance
+from `qSeed`, so `solutions.q(1,:)` remains the nearest returned candidate.
+Check `solutions.valid` before using any row. `solutions.info` reports the
+method, per-candidate FK errors, and whether analytical generation was
+available. IK does not reject candidates based on the preliminary collision
+shapes; its collision status is `UNKNOWN`.
+
+For `initial_trial`, MATLAB's analytical IK generator supplies candidate
+branches. The generated solver is cached outside this repository for each
+distinct kinematic model and is regenerated when geometry or tool placement
+changes. If analytical generation is unsupported, deterministic multistart
+MATLAB numerical IK is used; numerical multistart does not guarantee every
+possible branch. Cartesian trajectories evaluate the candidate sets across
+the entire path and choose a continuous joint sequence.
+For diagnostics, pass `struct('method',"numerical")` to test that fallback.
 
 ## Parameter Sweep Pattern
 
@@ -130,5 +157,38 @@ figures = plotDynamicsResults(results,struct('joint',2));
 Torque and speed arrays are N-by-DOF. Joint order comes from
 `robot.structure.jointNames`. Gravity is applied to a copy of the model;
 the shared `robot.model` is not changed. The sampled gravity maximum is an
-observed maximum, not a global bound. Run `example_dynamics_workflow()` for
-a full example and `validate_dynamics_analysis(robot)` for numerical checks.
+observed maximum, not a global bound. `optimizeGravityLoading(robot,options)`
+searches separate positive and negative gravity peaks for each joint using
+the stationary candidates and multiple local starts, but likewise provides
+no global certificate. `example_dynamics_workflow()` is only
+a J2-motion software smoke test, not an actuator-sizing case. Run
+`example_actuator_sizing_cases()` for preliminary line, arc, full-circle,
+multi-segment, and gravity load cases. See
+[actuator_sizing_cases/README.md](actuator_sizing_cases/README.md) for case
+definitions, limitations, outputs, and validation commands. Use
+`validate_dynamics_analysis(robot)` for numerical dynamics checks and
+`validate_actuator_sizing_cases(robot)` for trajectory and sampling checks.
+For synchronized robot animation and progressively revealed torque graphs,
+use `session = inspectDynamicsCase(robot,"LINE_WELD")` or select another
+enabled case ID. `inspectDynamicsCase(robot,"GRAVITY_HOLD")` displays
+stationary per-joint peak poses. See
+[visualization/README.md](visualization/README.md) for commands and controls.
+
+## Visual Joint Check
+
+From MATLAB with `Final_Architecture` and `Final_Architecture/visualization`
+on the path:
+
+```matlab
+robot = loadRobot();
+animate_robot_joints(robot);
+animate_robot_joints(robot,struct('jointIndices',[2 3], ...
+    'amplitudeDeg',60,'framesPerSweep',30,'pauseSeconds',0.05));
+```
+
+The animation moves one joint at a time around the reference pose, stays
+within joint limits, and returns to the reference pose before moving the
+next joint. `qReference` (radians), `jointIndices`, `amplitudeDeg`,
+`framesPerSweep`, and `pauseSeconds` are optional. To inspect a static
+pose, use `plot_robot(robot,q)`. `validate_robot_visuals(robot)` checks
+link endpoint attachment and COM ownership numerically at non-home poses.

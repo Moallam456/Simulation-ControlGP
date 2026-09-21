@@ -1,5 +1,5 @@
 function torque = estimateGravityMomentFromCom(robot,q,gravity)
-% ESTIMATEGRAVITYMOMENTFROMCOM Sum static moments of downstream body weights.
+% ESTIMATEGRAVITYMOMENTFROMCOM Independently audit static COM moments.
 % Independent of gravityTorque; useful to audit mass/COM placement at a pose.
 validateConfigurations(q,robot);
 if size(q,1) ~= 1 || numel(gravity) ~= 3 || any(~isfinite(gravity))
@@ -9,11 +9,13 @@ model = robot.model;
 dof = robot.structure.dof;
 torque = zeros(1,dof);
 for j = 1:dof
-    jointBody = model.Bodies{j};
+    jointName = char(robot.structure.bodyNames(j));
+    jointBody = getBody(model,jointName);
+    firstBody = find(strcmp(model.BodyNames,jointName),1);
     TJoint = getTransform(model,q,jointBody.Name);
     origin = TJoint(1:3,4);
     axisWorld = TJoint(1:3,1:3)*jointBody.Joint.JointAxis(:);
-    for k = j:numel(model.Bodies)
+    for k = firstBody:numel(model.Bodies)
         body = model.Bodies{k};
         T = getTransform(model,q,body.Name);
         comWorld = T(1:3,1:3)*body.CenterOfMass(:)+T(1:3,4);

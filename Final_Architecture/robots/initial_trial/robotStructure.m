@@ -19,7 +19,7 @@ structure.bodyNames = [
     "link_6"];
 
 structure.parentBodies = [
-    "base"
+    "base_structure"
     "link_1"
     "link_2"
     "link_3"
@@ -50,10 +50,11 @@ structure.jointAxes = [
     0  0  1];
 
 structure.frames.base = "base";
+structure.frames.baseStructure = "base_structure";
 structure.frames.flange = "link_6";
 structure.frames.endEffector = "tcp";
 
-structure.hasSphericalWrist = false;
+structure.hasSphericalWrist = true;
 structure.description = "6-DOF initial trial welding robot geometry.";
 
 end

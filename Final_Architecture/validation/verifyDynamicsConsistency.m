@@ -1,5 +1,5 @@
 function report = verifyDynamicsConsistency(robot,options)
-% VERIFYDYNAMICSCONSISTENCY Reproducible numerical identities for a robot.
+% VERIFYDYNAMICSCONSISTENCY Reproducible numerical validation identities.
 if nargin < 2, options = struct(); end
 if ~isfield(options,'gravity'), options.gravity = [0 0 -9.81]; end
 if ~isfield(options,'numSamples'), options.numSamples = 20; end

@@ -13,7 +13,7 @@ function [T_B_TCP, frames] = forward_kinematics(robot,q)
 validateRobot(robot);
 q = validateConfiguration(robot,q);
 
-if isfield(robot.dh,'fixedTransforms')
+if isfield(robot.chain,'fixedTransforms')
     [T_B_TCP, frames] = fixedTransformFK(robot,q);
 else
     [T_B_TCP, frames] = rigidBodyTreeFK(robot,q);
@@ -24,7 +24,7 @@ end
 function validateRobot(robot)
 
 if ~isstruct(robot) || ~isfield(robot,'structure') || ...
-   ~isfield(robot,'dh') || ~isfield(robot,'params')
+   ~isfield(robot,'chain') || ~isfield(robot,'params')
     error('forward_kinematics:InvalidRobot', ...
         'Expected a robot struct returned by loadRobot().');
 end
@@ -55,7 +55,7 @@ frames = cell(1,robot.structure.dof + 2);
 frames{1} = T;
 
 for i = 1:robot.structure.dof
-    T = T * robot.dh.fixedTransforms{i};
+    T = T * robot.chain.fixedTransforms{i};
     T = T * jointAxisTransform(robot.structure.jointAxes(i,:),q(i));
     frames{i+1} = T;
 end

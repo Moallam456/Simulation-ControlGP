@@ -29,6 +29,7 @@ results.loadRobot = validateLoadRobot(robot);
 results.kinematics = validate_kinematics(robot,numTests);
 results.workspace = validate_workspace_analysis(robot);
 results.dynamics = validate_dynamics_analysis(robot);
+results.visualGeometry = validate_robot_visuals(robot);
 results.plotSmoke = validatePlotSmoke(robot);
 
 results.success = ...
@@ -36,6 +37,7 @@ results.success = ...
     results.kinematics.success && ...
     results.workspace.success && ...
     results.dynamics.pass && ...
+    results.visualGeometry.pass && ...
     results.plotSmoke.success;
 
 fprintf('\n=====================================\n');
@@ -57,14 +59,14 @@ result.expectedRobotID = config.robotID;
 result.actualRobotID = robot.id;
 result.hasParams = isfield(robot,'params');
 result.hasStructure = isfield(robot,'structure');
-result.hasDH = isfield(robot,'dh');
+result.hasChain = isfield(robot,'chain');
 result.hasRigidBodyTree = isa(robot.model,'rigidBodyTree');
 result.hasIK = isa(robot.solveIK,'function_handle');
 
 result.success = result.actualRobotID == result.expectedRobotID && ...
     result.hasParams && ...
     result.hasStructure && ...
-    result.hasDH && ...
+    result.hasChain && ...
     result.hasRigidBodyTree && ...
     result.hasIK;
 
@@ -79,7 +81,9 @@ set(0,'DefaultFigureVisible','off');
 cleanup = onCleanup(@() set(0,'DefaultFigureVisible',oldVisibility));
 
 try
-    plot_robot(robot,robot.params.joints.homePosition);
+    q = robot.params.joints.homePosition;
+    q(2) = q(2) + deg2rad(45);
+    plot_robot(robot,q);
     close(gcf);
     result.success = true;
     result.message = "plot_robot executed.";
