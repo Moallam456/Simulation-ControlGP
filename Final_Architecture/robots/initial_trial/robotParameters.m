@@ -58,20 +58,16 @@ params.tool.dynamics.status = "estimated";
 
 %% Links
 %
-% A body at Ji carries the segment Ji -> J(i+1). The supplied motor/gearbox
-% modules are provisionally assigned to the upstream body at the distal
-% joint center. J6 -> TCP structure and payload live on the fixed TCP body.
-params.base.mass = 12.00; % fixed O0 -> J1 assembly, estimated [kg].
-params.base.radius = 0.055; % estimated [m].
-params.base.dynamics.status = "estimated";
-params.base.massPropertySource = "preliminary fixed base assembly mass";
+% Segment and joint-module masses are preliminary values provided for
+% dynamics setup. buildModel derives rigidBody COM and inertia from these
+% values and the geometry-derived link segments.
 
-structuralMass = [10.00 5.00 2.14 1.07 1.07 0]; % kg
-jointModuleMass = [0 3.20 1.50 1.50 1.00 0]; % kg
+structuralMass = [12.00 10.00 5.00 2.14 1.07 1.07]; % kg
+jointModuleMass = [0 7 3.20 1.50 1.50 1.00]; % kg
 linkMass = structuralMass + jointModuleMass;
 
-linkRadius = [0.050 0.040 0.035 0.030 0.026 0.026]; % m, estimated
-jointRadius = [0.065 0.048 0.042 0.036 0.032 0.032]; % m, estimated
+linkRadius = [0.055 0.050 0.040 0.035 0.030 0.026]; % m, estimated
+jointRadius = [0.070 0.065 0.048 0.042 0.036 0.032]; % m, estimated
 
 linkColor = [
     0.15 0.15 0.15
@@ -89,7 +85,7 @@ for i = 1:6
     params.links(i).jointRadius = jointRadius(i);
     params.links(i).color = linkColor(i,:);
     params.links(i).centerOfMass = [NaN NaN NaN];
-    params.links(i).inertia = NaN(3,3); % optional tensor about COM, body axes.
+    params.links(i).inertia = NaN(3,3);
     params.links(i).massPropertySource = ...
         "preliminary segment and joint-module masses, simplified geometry inertia";
     params.links(i).dynamics.status = "estimated";
@@ -101,8 +97,8 @@ params.dynamics.geometryChecks.j3ToJ4OffsetPathLength = ...
     params.geometry.l5 + params.geometry.l6 + params.geometry.l7;
 params.dynamics.geometryChecks.j3ToJ4ProvidedLength = 0.150;
 params.dynamics.provisionalMasses = [
-    struct("body","base_structure","reason","estimated fixed base assembly mass")
-    struct("body","link_1","reason","estimated J1-to-J2 shoulder support mass")];
+    struct("body","link_1","reason","estimated base/J1 assembly mass")
+    struct("body","link_2","reason","estimated J2 shoulder support mass")];
 
 % Source measurements (horizontal J2 reference) are retained as notes. The
 % geometry and component masses above are the single numerical source.
@@ -113,8 +109,7 @@ params.dynamics.horizontalComFromJ2 = [0.175 0.425 0.5375 0.6125 0.675];
 params.notes.missingData = [
     "Replace estimated l1 and l2 with CAD measurements."
     "Confirm the estimated J3-to-J4 offset split l5/l6/l7; the current path length sums to 150 mm."
-    "Replace provisional fixed-base and J1-to-J2 masses with measured assembly masses."
-    "Confirm which side of each joint carries its motor/gearbox housing."
+    "Replace provisional link_1 and link_2 masses with measured base/J1/J2 assembly masses."
     "Confirm final radii and physical shape for each simplified cylinder."
     "Confirm exact positive joint directions from CAD."
     "Replace simplified inertias with CAD-derived inertias when available."
