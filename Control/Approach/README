@@ -1,0 +1,86 @@
+# STM32 Approach State — initial implementation
+
+This module moves the robot from its measured joint configuration to sample 0
+of a validated 1 ms CSP trajectory. It is deliberately independent of HMI,
+EtherCAT and flash drivers; the supervisory task supplies the operation request
+and control inputs, while `ApproachServices` supplies hardware adapters.
+
+## Motion strategy
+
+- All joints move simultaneously with one synchronized quintic progress law.
+- Duration is calculated from configured velocity, acceleration and optional
+  jerk limits, multiplied by a safety factor, then rounded **up** to an exact
+  integer number of 1 ms intervals.
+- The entire route is sampled and checked before the first movement command.
+- A direct route may be replaced by up to three prevalidated clearance poses.
+- The last command uses the exact `int32_t` drive units stored in sample 0, so
+  Preview/Welding begins without a position discontinuity.
+- On pause/protective stop the state holds measured position. Resume causes a
+  new route to be generated and collision-checked from the measured position.
+
+Moving joints in a fixed one-at-a-time order is intentionally not implemented:
+it is not generally collision-safe. Safety comes from cell-aware collision
+checking and, where necessary, installation-specific clearance poses.
+
+## Files
+
+- `approach_state_types.h`: requests, configuration, services, phases, errors.
+- `approach_state.h/.c`: nonblocking state implementation.
+- `approach_state_debug.h`: optional debug output.
+- `approach_state_test.c`: host-side mock tests.
+- `approach_project_adapter.h/.c`: connects `ValidatedTrajectory`, the common
+  per-axis drive conversion, trajectory storage and drive PDO callbacks.
+- `approach_project_adapter_test.c`: verifies the Path Validation connection
+  and exact native-unit handoff at sample zero.
+- `Makefile`: builds and runs the tests with GCC.
+
+## Supervisor integration
+
+The supervisor interprets `VALIDATE/PREVIEW` or `START/REPLAY`, establishes
+`ApproachOperation`, checks global entry conditions, and calls
+`ApproachState_Enter()`. It then calls `ApproachState_Step()` once per control
+tick and selects Preview or Arc Stabilizing after `APPROACH_RESULT_COMPLETE`.
+
+The state does not clear programs or change top-level robot states. Reset and
+Home are reported as distinct abort reasons so the supervisor can apply the
+system policy.
+
+## Required STM32 adapters
+
+1. `read_first_sample`: read sample 0 from the committed validation artifact.
+2. `units_to_rad` and `rad_to_units`: per-axis encoder, electronic gearing,
+   gearbox, direction and zero-offset conversion.
+3. `read_feedback`: PDO position feedback plus CSP/Operation Enabled status.
+4. `write_targets`: write all six CSP targets into the process image.
+5. `exchange_bus`: perform/confirm one successful EtherCAT exchange.
+6. `collision_free`: check robot links, tool, workpiece and cell obstacles.
+
+`ApproachProjectAdapter` supplies these wrappers for the current project. Its
+drive callback reports actual positions in native CiA 402 units and a ready bit
+for each axis. The adapter converts feedback with the same scale, sign and zero
+offset stored in `PathValidationConfig`; target commands remain in native
+`int32_t` units from generation to the drive PDO.
+
+`collision_free` must not be replaced by the permissive mock used by the unit
+test in a real machine. Until the real cell collision model is available, keep
+`require_collision_check = true` and prevent production motion.
+
+## Run host tests
+
+```sh
+make test
+```
+
+The tests cover normal movement, pause/replan, collision rejection before any
+motion command, and a two-leg route through a clearance pose.
+
+## Integration items intentionally left for the hardware layer
+
+- CiA 402 statusword and mode-display decoding.
+- A6-EC per-axis position conversion.
+- EtherCAT distributed-clock timing and WKC policy.
+- Hardwired E-stop/STO behavior.
+- Real collision geometry and certified clearance poses.
+- CRC recalculation while reading external trajectory storage. The state checks
+  the supervisor-provided program/revision/artifact identity, but storage must
+  verify the committed artifact and sample-data CRC before marking it valid.
