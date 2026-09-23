@@ -9,8 +9,7 @@ It does not size a motor or gearbox and does not assume external process forces.
 | File | Role |
 | --- | --- |
 | `validateDynamicModel(robot)` | Checks topology, body mass, COM, inertia, parameter mapping, and provenance. Returns `pass`, `tests`, `errors`, `warnings`, `bodyNames`, `dataQuality`, `dataSource`, `preliminary`. |
-| `analyzeGravityLoading(robot,options)` | Evaluates robot-specific stationary candidate poses by default, plus `options.q` and/or seeded `options.numSamples`; returns observed extrema and samples. |
-| `optimizeGravityLoading(robot,options)` | Separately searches positive and negative gravity peaks for every joint using sampled starts and bounded `fmincon`. Requires Optimization Toolbox. |
+| `analyzeGravityLoading(robot,options)` | Searches positive and negative stationary gravity peaks for every joint. `mode="poses"` evaluates specified poses without optimization. Search requires Optimization Toolbox. |
 | `analyzeTrajectoryDynamics(robot,trajectory,scenario)` | Calculates `massMatrix`, `velocityProduct`, `gravityTorque`, and `inverseDynamics` for every sample. |
 | `summarizeDynamicsResults(results,robot)` | Builds joint summary and peak-event state records. |
 | `plotDynamicsResults(results,options)` | Plots torque, paired torque/speed, power, and optional decomposition for `options.joint`. |
@@ -52,28 +51,31 @@ mechanical power extrema. Negative power means mechanical power is returned
 at the joint; it is not a prediction of electrical regeneration.
 Joint labels come from `robot.structure.jointNames` in model column order.
 
-`analyzeGravityLoading` returns all evaluated `q` and torques, per-joint
-maximum observed absolute torque and its configuration, signed extrema,
-and `sampledMaximumIsGlobalBound=false`. `poseNames` identifies user, named
-candidate, and random rows; `candidatePoseCount` counts the included catalog.
-`options.includeCandidatePoses=false` omits the catalog when evaluating only
-user-supplied poses. Random samples use a local restored
-RNG state. They do not prove a global worst case.
+`analyzeGravityLoading` defaults to `mode="search"`. It evaluates home,
+robot-specific candidates, and 1,000 seeded random poses as starting points,
+then uses bounded `fmincon` from up to four starts for each torque direction
+of each joint. `summaryTable` reports the best torque found. Row `j` of
+`qAtMaxAbs`, `qAtPositiveMax`, and `qAtNegativeMin` is the full pose for
+joint `j`; `q`, `torque`, and `poseNames` contain only the final absolute-peak
+poses, not the starting samples. `numEvaluatedStartPoses` and
+`candidatePoseCount` record search coverage. The search is not a certified
+global maximum (`meta.globalMaximumCertified=false`) and enforces joint
+limits only, not collisions or workpiece constraints. Random sampling uses
+a local restored RNG state.
 
-`optimizeGravityLoading` improves this by separately maximizing positive
-and negative gravity torque for every joint, then choosing the larger
-absolute result. Each joint can have a different maximizing configuration.
-Its `summaryTable` reports the best found torque; `qAtMaxAbs`,
-`qAtPositiveMax`, and `qAtNegativeMin` contain the corresponding full poses.
-`sampled` retains the initial samples, and `nonpositiveExitCount` shows
-optimizer runs that hit a stopping limit. This is still a numerical search,
-not a certified global maximum (`meta.globalMaximumCertified=false`).
-The default is 1,000 random poses plus home and the robot-specific candidate
-poses, then up to four local starts
-for each sign of each joint. Its domain is joint limits only; collision and
-workpiece constraints are not included.
+With `mode="poses"`, the same function evaluates supplied `options.q` and,
+unless disabled, the robot-specific candidate poses without optimization.
+It returns one matching row each in `q`, `torque`, and `poseNames`. Use
+`includeCandidatePoses=false` to evaluate only `options.q`. This mode does
+not need Optimization Toolbox.
 
 ## Physical Data and Caveats
+
+Current input gap: `robots/initial_trial/robotParameters.m` does not define
+`params.base.mass` or `params.base.radius`, although `buildModel.m` requires
+both. Consequently, `loadRobot()` cannot build the default model until those
+fixed-base properties are confirmed and added. Do not treat temporary values
+used for software tests as measured mass properties.
 
 `robots/initial_trial/robotParameters.m` owns component masses, geometry,
 estimated radii, and optional explicit COM/inertia. `buildModel.m` maps them
@@ -131,15 +133,15 @@ it has 81 time samples, starts at home, and moves J2 by +20 degrees while
 all other joints stay at home. `output.inputTrajectory` holds the actual
 time, q, qd, and qdd arrays. `analyzeTrajectoryDynamics` evaluates these
 snapshots; it does not itself animate or command a physical robot.
-The example's gravity check evaluates home, robot-specific candidates, and
-100 random poses. The validation gravity check uses 20 random poses.
-For a separate stronger gravity search, run:
+The example's gravity search starts from home, robot-specific candidates,
+and 100 random poses. The validation gravity search uses 20 random poses.
+For the default full search, run:
 
 ```matlab
 robot = loadRobot();
 options = struct('gravity',[0 0 -9.81], 'numSamples',1000, ...
                  'numStarts',4, 'seed',1);
-peaks = optimizeGravityLoading(robot,options);
+peaks = analyzeGravityLoading(robot,options);
 disp(peaks.summaryTable)
 disp(peaks.qAtMaxAbs) % row j is the pose for joint j's absolute peak
 ```
@@ -175,21 +177,21 @@ j = 2;
 disp(rad2deg(staticResult.qAtMaxAbs(j,:)))
 ```
 
-Each row of `staticResult.q` is an independent stationary pose, and the matching row
-of `staticResult.torque` is its six-joint holding torque. `staticResult.poseNames` labels each
-row. For just one pose without the catalog or random samples:
+Each row of `staticResult.q` is a different joint's found peak pose; the matching
+row of `staticResult.torque` contains all six holding torques at that pose.
+For just one pose without searching or including the catalog:
 
 ```matlab
 q = deg2rad([0 90 0 0 0 0]);
 one = analyzeGravityLoading(robot,struct('gravity',[0 0 -9.81], ...
-    'q',q,'includeCandidatePoses',false));
+    'q',q,'includeCandidatePoses',false,'mode',"poses"));
 disp(one.torque)
 ```
 
-For a stronger *per-joint* numerical search (Optimization Toolbox required):
+To adjust the *per-joint* numerical search (Optimization Toolbox required):
 
 ```matlab
-peaks = optimizeGravityLoading(robot,struct('gravity',[0 0 -9.81], ...
+peaks = analyzeGravityLoading(robot,struct('gravity',[0 0 -9.81], ...
     'numSamples',1000,'numStarts',4,'seed',1));
 disp(peaks.summaryTable)
 disp(rad2deg(peaks.qAtMaxAbs(2,:))) % J2's found worst pose in degrees
@@ -197,7 +199,7 @@ plot_robot(robot,peaks.qAtMaxAbs(2,:))
 ```
 
 `peaks.qAtMaxAbs(j,:)` is joint `j`'s own maximizing configuration; rows do
-not need to be the same pose. `peaks.sampled` contains every starting pose.
+not need to be the same pose. Starting poses are used internally, not returned.
 Set `includeCandidatePoses=false` to omit the catalog, or supply `q` as extra
 starting rows. Increasing `numSamples` and `numStarts` improves exploration
 but does not certify a global maximum. No stationary pose alone bounds the

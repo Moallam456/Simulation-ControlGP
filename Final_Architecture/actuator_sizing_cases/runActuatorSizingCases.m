@@ -36,7 +36,7 @@ for i=1:numel(cases)
                 'numSamples',options.gravitySamples,'numStarts',options.gravityStarts, ...
                 'maxFunctionEvaluations',options.gravityMaxEvaluations, ...
                 'seed',options.seed);
-            suite.gravity=optimizeGravityLoading(robot,gravityOptions);
+            suite.gravity=analyzeGravityLoading(robot,gravityOptions);
             result.status="PASS";
             result.reason="Numerical search only; not a certified global maximum.";
         catch ME

@@ -11,6 +11,8 @@ end
 gravityOptions.gravity = scenario.gravity;
 gravityOptions.q = robot.params.joints.homePosition;
 gravityOptions.numSamples = 100;
+gravityOptions.numStarts = 2;
+gravityOptions.maxFunctionEvaluations = 300;
 gravityOptions.seed = 1;
 output.gravity = analyzeGravityLoading(robot,gravityOptions);
 

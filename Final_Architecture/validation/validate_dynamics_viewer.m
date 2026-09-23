@@ -69,7 +69,7 @@ end
 staticQ = [q0;q0];
 staticQ(2,2) = staticQ(2,2)+deg2rad(40);
 staticResult = analyzeGravityLoading(robot,struct('gravity',gravity, ...
-    'q',staticQ,'includeCandidatePoses',false));
+    'q',staticQ,'includeCandidatePoses',false,'mode',"poses"));
 staticResult.poseNames = ["home";"J2 +40 deg"];
 staticViewer = viewGravityLoading(robot,staticResult, ...
     struct('visible',false,'joint',2,'initialPose',1));
@@ -85,7 +85,7 @@ report.staticAligned = staticState.index == 2 && ...
 staticViewer.close();
 clear staticCleanup
 single = analyzeGravityLoading(robot,struct('gravity',gravity, ...
-    'q',q0,'includeCandidatePoses',false));
+    'q',q0,'includeCandidatePoses',false,'mode',"poses"));
 singleViewer = viewGravityLoading(robot,single,struct('visible',false));
 report.singleStaticPose = singleViewer.getState().index == 1;
 singleViewer.close();

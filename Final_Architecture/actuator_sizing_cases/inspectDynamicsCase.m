@@ -62,6 +62,7 @@ if string(selected.category) == "gravity"
     end
     poseOptions = struct('gravity',scenario.gravity,'q',q, ...
         'includeCandidatePoses',false);
+    poseOptions.mode = "poses";
     poses = analyzeGravityLoading(robot,poseOptions);
     poses.poseNames = labels;
     session.staticPoses = poses;

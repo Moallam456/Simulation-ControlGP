@@ -6,14 +6,7 @@ analysis code receives a common robot interface.
 ## Main Usage
 
 ```matlab
-addpath('Final_Architecture', ...
-        'Final_Architecture\kinematics', ...
-        'Final_Architecture\visualization', ...
-        'Final_Architecture\validation', ...
-        'Final_Architecture\workspace_analysis', ...
-        'Final_Architecture\dynamics_analysis', ...
-        'Final_Architecture\trajectory', ...
-        'Final_Architecture\actuator_sizing_cases')
+addpath(genpath(fullfile(pwd,'Final_Architecture')))
 
 robot = loadRobot();
 
@@ -156,11 +149,11 @@ figures = plotDynamicsResults(results,struct('joint',2));
 `torqueSpeed.speed/torque`, `summaryTable`, and `peakEvents`.
 Torque and speed arrays are N-by-DOF. Joint order comes from
 `robot.structure.jointNames`. Gravity is applied to a copy of the model;
-the shared `robot.model` is not changed. The sampled gravity maximum is an
-observed maximum, not a global bound. `optimizeGravityLoading(robot,options)`
+the shared `robot.model` is not changed. `analyzeGravityLoading(robot,options)`
 searches separate positive and negative gravity peaks for each joint using
-the stationary candidates and multiple local starts, but likewise provides
-no global certificate. `example_dynamics_workflow()` is only
+stationary candidates and multiple local starts; `options.mode="poses"` only
+evaluates specified stationary poses. The search requires Optimization Toolbox
+and provides no global certificate. `example_dynamics_workflow()` is only
 a J2-motion software smoke test, not an actuator-sizing case. Run
 `example_actuator_sizing_cases()` for preliminary line, arc, full-circle,
 multi-segment, and gravity load cases. See
