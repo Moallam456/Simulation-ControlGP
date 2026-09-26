@@ -13,7 +13,7 @@ robot = loadRobot();
 show(robot.model, robot.params.joints.homePosition, 'Frames', 'on')
 plot_robot(robot, robot.params.joints.homePosition)
 
-results = validate_kinematics(robot);
+report = validate_robot_ver1(robot);
 ```
 
 To change the default robot, edit only:
@@ -41,13 +41,42 @@ robot.model
 robot.solveIK
 robot.actuation
 robot.collision
+robot.readiness
 ```
 
 Generic analyses should accept this `robot` struct explicitly.
 
 ## Robot-Specific Folder
 
-The current robot is `initial_trial`.
+The default robot is `robot_ver1`. It is imported from its robot-specific
+URDF package and currently has five joints because Joint 6 is absent from
+the CAD export.
+
+```text
+robots/robot_ver1/
+  robotDefinition.m
+  solveInverseKinematics.m
+  collision/collisionGeometry.m
+  CAD/robot_ver1/
+    urdf/robot_ver1.urdf
+    meshes/*.STL
+```
+
+The URDF is the sole source for `robot_ver1` transforms, mesh geometry,
+masses, COM locations, and inertias. `robotDefinition.m` imports it with
+row-vector configurations and derives the common `params`, `structure`, and
+`chain` metadata from the imported tree. MATLAB applies temporary `[-pi,pi]`
+limits and zero home positions to the five joints without changing the CAD
+export. The temporary TCP is the `Wrist_2` origin.
+
+`robot.readiness` records that Joint 6 is missing, limits and TCP are
+provisional, Inventor properties used Low accuracy, and final actuator sizing
+is blocked. Preliminary FK, numerical IK, visualization, workspace,
+collision inspection, and rigid-body dynamics remain available. The current
+`Link_3`/`Wrist_2` home collision is intentionally reported as unresolved;
+MATLAB treats imported mesh collision geometry as convex.
+
+The earlier programmatic model remains available explicitly:
 
 ```text
 robots/initial_trial/
@@ -104,6 +133,11 @@ possible branch. Cartesian trajectories evaluate the candidate sets across
 the entire path and choose a continuous joint sequence.
 For diagnostics, pass `struct('method',"numerical")` to test that fallback.
 
+For `robot_ver1`, `robot.solveIK` uses deterministic numerical multistart IK.
+It validates returned candidates with FK and joint limits, but it cannot
+invent the missing sixth degree of freedom and does not perform collision
+rejection.
+
 ## Parameter Sweep Pattern
 
 ```matlab
@@ -143,6 +177,11 @@ results = analyzeTrajectoryDynamics(robot,trajectory,scenario);
 disp(results.summaryTable)
 figures = plotDynamicsResults(results,struct('joint',2));
 ```
+
+For `robot_ver1`, these results are explicitly preliminary and include
+`results.meta.readiness`. Calls to `createActuatorSizingCases` and
+`runActuatorSizingCases` are blocked until Joint 6, final limits, TCP, mass
+property accuracy, and collision status are resolved.
 
 `results` contains `meta`, `time`, `state.q/qd/qdd`,
 `torque.total/gravity/inertial/velocity/residual`, `power.joint`,

@@ -21,6 +21,14 @@ fprintf('\n=====================================\n');
 fprintf('KINEMATICS VALIDATION: %s\n',robot.id);
 fprintf('=====================================\n\n');
 
+if ~isfield(robot.chain,'fixedTransforms')
+    results = validateImportedTreeKinematics(robot,numTests);
+    fprintf('\n=====================================\n');
+    fprintf('OVERALL SUCCESS: %d\n',results.success);
+    fprintf('=====================================\n');
+    return;
+end
+
 results.structure = validateStructure(robot);
 results.parameters = validateParameters(robot);
 results.transformChain = validateTransformChain(robot);
@@ -42,6 +50,48 @@ fprintf('\n=====================================\n');
 fprintf('OVERALL SUCCESS: %d\n',results.success);
 fprintf('=====================================\n');
 
+end
+
+function results = validateImportedTreeKinematics(robot,numTests)
+limits = robot.params.joints.positionLimits;
+home = robot.params.joints.homePosition;
+moving = robot.model.Bodies(cellfun( ...
+    @(body) ~strcmpi(body.Joint.Type,'fixed'),robot.model.Bodies));
+results.structure.success = numel(moving) == robot.structure.dof && ...
+    numel(robot.structure.bodyNames) == robot.structure.dof && ...
+    all(abs(vecnorm(robot.structure.jointAxes,2,2)-1) < 1e-12);
+results.parameters.success = isequal(size(limits),[robot.structure.dof 2]) && ...
+    all(limits(:,1)<limits(:,2)) && ...
+    all(home(:)>=limits(:,1) & home(:)<=limits(:,2));
+results.transformChain.maxError = 0;
+for i = 1:robot.structure.dof
+    actual = getTransform(robot.model,home,char(robot.structure.bodyNames(i)));
+    results.transformChain.maxError = max(results.transformChain.maxError, ...
+        norm(actual-robot.chain.homeFrames{i+1},'fro'));
+end
+results.transformChain.success = results.transformChain.maxError < 1e-12;
+dynamicCheck = validateDynamicModel(robot);
+results.massProperties.success = dynamicCheck.pass;
+results.fkVsRigidBodyTree = validateFKAgainstRigidBodyTree(robot,numTests);
+
+qTarget = home;
+qTarget(1:min(5,robot.structure.dof)) = [0.20 -0.30 0.25 0.10 -0.20];
+target = forward_kinematics(robot,qTarget);
+solution = robot.solveIK(target,struct('qSeed',qTarget,'numStarts',4));
+results.ik.numTests = 1;
+results.ik.passed = double(solution.valid);
+results.ik.success = solution.valid && solution.info.positionError < 1e-5 && ...
+    solution.info.orientationError < 1e-4;
+results.geometryPropagation.success = true;
+results.geometryPropagation.skipped = true;
+results.geometryPropagation.reason = ...
+    "URDF geometry changes require a robot-specific URDF revision.";
+results.success = results.structure.success && results.parameters.success && ...
+    results.transformChain.success && results.massProperties.success && ...
+    results.fkVsRigidBodyTree.success && results.ik.success;
+fprintf('Imported-tree structure valid: %d\n',results.structure.success);
+fprintf('Imported-tree mass properties valid: %d\n',results.massProperties.success);
+fprintf('Numerical IK round trip valid: %d\n',results.ik.success);
 end
 
 function result = validateStructure(robot)

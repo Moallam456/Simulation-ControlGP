@@ -3,22 +3,22 @@
      Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
      For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
 <robot
-  name="URDF_Files(ver1)">
+  name="robot_ver1">
   <link
     name="Base_Link">
     <inertial>
       <origin
-        xyz="0.019136 0.081654 0.13016"
+        xyz="0.019014 0.084231 0.157204"
         rpy="0 0 0" />
       <mass
-        value="5.0444" />
+        value="21.810" />
       <inertia
-        ixx="0.092279"
-        ixy="-0.0093377"
-        ixz="0.0013703"
-        iyy="0.056356"
-        iyz="0.0056236"
-        izz="0.10199" />
+        ixx="0.454195341"
+        ixy="-0.052838873"
+        ixz="0.000735510"
+        iyy="0.232363011"
+        iyz="-0.004404638"
+        izz="0.424159848" />
     </inertial>
     <visual>
       <origin
@@ -26,7 +26,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Files(ver1)/meshes/Base_Link.STL" />
+          filename="package://robot_ver1/meshes/Base_Link.STL" />
       </geometry>
       <material
         name="">
@@ -40,7 +40,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Files(ver1)/meshes/Base_Link.STL" />
+          filename="package://robot_ver1/meshes/Base_Link.STL" />
       </geometry>
     </collision>
   </link>
@@ -48,17 +48,17 @@
     name="Link_1">
     <inertial>
       <origin
-        xyz="-0.084821 -0.037517 0.089332"
+        xyz="-0.106451 -0.056736 0.101055148"
         rpy="0 0 0" />
       <mass
-        value="3.0503" />
+        value="16.058" />
       <inertia
-        ixx="0.0090837"
-        ixy="-0.00083218"
-        ixz="0.0021216"
-        iyy="0.011295"
-        iyz="-0.0001199"
-        izz="0.013963" />
+        ixx="0.136863054"
+        ixy="-0.050765210"
+        ixz="0.032896087"
+        iyy="0.105710534"
+        iyz="0.018485160"
+        izz="0.182139824" />
     </inertial>
     <visual>
       <origin
@@ -66,7 +66,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Files(ver1)/meshes/Link_1.STL" />
+          filename="package://robot_ver1/meshes/Link_1.STL" />
       </geometry>
       <material
         name="">
@@ -80,7 +80,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Files(ver1)/meshes/Link_1.STL" />
+          filename="package://robot_ver1/meshes/Link_1.STL" />
       </geometry>
     </collision>
   </link>
@@ -106,17 +106,17 @@
     name="Link_2">
     <inertial>
       <origin
-        xyz="0.007604 -0.27262 0.0054598"
+        xyz="0.007556557 -0.323779148 -0.034318388"
         rpy="0 0 0" />
       <mass
-        value="2.1582" />
+        value="9.843" />
       <inertia
-        ixx="0.032014"
-        ixy="-2.6229E-05"
-        ixz="-0.00015268"
-        iyy="0.0061238"
-        iyz="-0.0029275"
-        izz="0.032806" />
+        ixx="0.283633553"
+        ixy="-0.001522461"
+        ixz="-0.002071939"
+        iyy="0.081955589"
+        iyz="-0.075480421"
+        izz="0.223113212" />
     </inertial>
     <visual>
       <origin
@@ -124,7 +124,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Files(ver1)/meshes/Link_2.STL" />
+          filename="package://robot_ver1/meshes/Link_2.STL" />
       </geometry>
       <material
         name="">
@@ -138,7 +138,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Files(ver1)/meshes/Link_2.STL" />
+          filename="package://robot_ver1/meshes/Link_2.STL" />
       </geometry>
     </collision>
   </link>
@@ -164,17 +164,17 @@
     name="Link_3">
     <inertial>
       <origin
-        xyz="-0.16778 -0.044173 0.023654"
+        xyz="-0.182291207 -0.065672927 0.003309351"
         rpy="0 0 0" />
       <mass
-        value="1.1249" />
+        value="7.576" />
       <inertia
-        ixx="0.0020712"
-        ixy="-0.0017231"
-        ixz="-0.00035483"
-        iyy="0.0082839"
-        iyz="-0.00012235"
-        izz="0.0098461" />
+        ixx="0.017737847"
+        ixy="-0.015137997"
+        ixz="-0.006522662"
+        iyy="0.056818141"
+        iyz="-0.004964643"
+        izz="0.064187316" />
     </inertial>
     <visual>
       <origin
@@ -182,7 +182,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Files(ver1)/meshes/Link_3.STL" />
+          filename="package://robot_ver1/meshes/Link_3.STL" />
       </geometry>
       <material
         name="">
@@ -196,7 +196,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Files(ver1)/meshes/Link_3.STL" />
+          filename="package://robot_ver1/meshes/Link_3.STL" />
       </geometry>
     </collision>
   </link>
@@ -222,17 +222,17 @@
     name="Wrist_1">
     <inertial>
       <origin
-        xyz="-0.042185 0.00029946 -0.088226"
+        xyz="-0.066487521 0.010831776 -0.091501332"
         rpy="0 0 0" />
       <mass
-        value="0.25214" />
+        value="4.535" />
       <inertia
-        ixx="0.00013594"
-        ixy="-1.203E-07"
-        ixz="1.919E-05"
-        iyy="0.00017148"
-        iyz="1.9144E-06"
-        izz="0.00011709" />
+        ixx="0.003082819"
+        ixy="0.000162991"
+        ixz="-0.001849359"
+        iyy="0.012487247"
+        iyz="0.000291435"
+        izz="0.010901109" />
     </inertial>
     <visual>
       <origin
@@ -240,7 +240,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Files(ver1)/meshes/Wrist_1.STL" />
+          filename="package://robot_ver1/meshes/Wrist_1.STL" />
       </geometry>
       <material
         name="">
@@ -254,7 +254,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Files(ver1)/meshes/Wrist_1.STL" />
+          filename="package://robot_ver1/meshes/Wrist_1.STL" />
       </geometry>
     </collision>
   </link>
@@ -280,17 +280,17 @@
     name="Wrist_2">
     <inertial>
       <origin
-        xyz="0.042185 -0.00029947 -0.088226"
+        xyz="0.069619270 -0.003019655 0.095127911"
         rpy="0 0 0" />
       <mass
-        value="0.25214" />
+        value="4.535" />
       <inertia
-        ixx="0.00013594"
-        ixy="-1.2033E-07"
-        ixz="-1.919E-05"
-        iyy="0.00017148"
-        iyz="-1.9144E-06"
-        izz="0.00011709" />
+        ixx="0.003224584"
+        ixy="-0.001152678"
+        ixz="-0.001836682"
+        iyy="0.012390637"
+        iyz="-0.000274620"
+        izz="0.010855955" />
     </inertial>
     <visual>
       <origin
@@ -298,7 +298,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Files(ver1)/meshes/Wrist_2.STL" />
+          filename="package://robot_ver1/meshes/Wrist_2.STL" />
       </geometry>
       <material
         name="">
@@ -312,7 +312,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Files(ver1)/meshes/Wrist_2.STL" />
+          filename="package://robot_ver1/meshes/Wrist_2.STL" />
       </geometry>
     </collision>
   </link>

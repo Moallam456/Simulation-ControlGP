@@ -6,6 +6,6 @@ function config = projectConfig()
 % Change config.robotID here to switch the default robot used by scripts
 % that call loadRobot() without an explicit robot ID.
 
-config.robotID = "initial_trial";
+config.robotID = "robot_ver1";
 
 end

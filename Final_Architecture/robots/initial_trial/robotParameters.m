@@ -14,6 +14,11 @@ params.id = "initial_trial";
 params.displayName = "initial_trial";
 params.version = "v1";
 
+params.base.mass = 12.0;
+params.base.radius = 0.080;
+params.base.massPropertySource = "preliminary fixed base estimate";
+params.base.dynamics.status = "estimated";
+
 %% Geometry
 
 params.geometry.l1 = 0.200;  % O0 -> O1, base height, estimated [m].

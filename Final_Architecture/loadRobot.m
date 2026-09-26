@@ -4,7 +4,7 @@ function robot = loadRobot(robotID, params)
 %
 % Usage:
 %   robot = loadRobot()
-%   robot = loadRobot("initial_trial")
+%   robot = loadRobot("robot_ver1")
 %   robot = loadRobot("initial_trial", modifiedParams)
 %
 % Robot-specific code lives under:
@@ -25,13 +25,23 @@ end
 robotID = lower(string(robotID));
 robotFolder = robotFolderFor(rootDir,robotID);
 
-if isempty(params)
-    params = callInRobotFolder(robotFolder,"robotParameters");
+definitionFile = fullfile(robotFolder,'robotDefinition.m');
+if isfile(definitionFile)
+    definition = callInRobotFolder(robotFolder,"robotDefinition",params);
+    params = definition.params;
+    structure = definition.structure;
+    chain = definition.chain;
+    model = definition.model;
+    readiness = definition.readiness;
+else
+    if isempty(params)
+        params = callInRobotFolder(robotFolder,"robotParameters");
+    end
+    structure = callInRobotFolder(robotFolder,"robotStructure");
+    chain = callInRobotFolder(robotFolder,"kinematicChain",params,structure);
+    model = callInRobotFolder(robotFolder,"buildModel",params,structure,chain);
+    readiness = defaultReadiness();
 end
-
-structure = callInRobotFolder(robotFolder,"robotStructure");
-chain = callInRobotFolder(robotFolder,"kinematicChain",params,structure);
-model = callInRobotFolder(robotFolder,"buildModel",params,structure,chain);
 
 actuation = callInFolderIfFileExists( ...
     fullfile(robotFolder,'actuation'), ...
@@ -56,6 +66,7 @@ robot.params = params;
 robot.structure = structure;
 robot.chain = chain;
 robot.model = model;
+robot.readiness = readiness;
 robot.actuation = actuation;
 robot.collision = collision;
 robot.gravityPoses = gravityPoses;
@@ -67,6 +78,8 @@ end
 function robotFolder = robotFolderFor(rootDir,robotID)
 
 switch robotID
+    case "robot_ver1"
+        robotFolder = fullfile(rootDir,'robots','robot_ver1');
     case "initial_trial"
         robotFolder = fullfile(rootDir,'robots','initial_trial');
     otherwise
@@ -78,6 +91,18 @@ if ~isfolder(robotFolder)
     error('loadRobot:MissingRobotFolder', ...
         'Robot folder does not exist: %s', robotFolder);
 end
+
+end
+
+function readiness = defaultReadiness()
+
+readiness.status = "READY_FOR_PRELIMINARY_ANALYSIS";
+readiness.warnings = strings(0,1);
+readiness.joint6Missing = false;
+readiness.jointLimitsProvisional = false;
+readiness.tcpProvisional = false;
+readiness.massPropertiesPreliminary = false;
+readiness.actuatorSizingAllowed = true;
 
 end
 

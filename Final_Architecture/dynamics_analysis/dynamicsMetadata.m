@@ -11,4 +11,16 @@ if validation.preliminary
     meta.label = "PRELIMINARY ideal rigid-body joint torque";
 end
 meta.assumptions = "No friction, transmission, motor rotor inertia, external wrench, or safety margin.";
+if isfield(robot,'readiness')
+    meta.readiness = robot.readiness;
+    meta.warnings = robot.readiness.warnings;
+    if isfield(robot.readiness,'massPropertiesPreliminary') && ...
+            robot.readiness.massPropertiesPreliminary
+        meta.preliminary = true;
+        meta.label = "PRELIMINARY ideal rigid-body joint torque";
+    end
+else
+    meta.readiness.status = "UNSPECIFIED";
+    meta.warnings = strings(0,1);
+end
 end

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 2.8.3)
 
-project(URDF_Files(ver1))
+project(robot_ver1)
 
 find_package(catkin REQUIRED)
 

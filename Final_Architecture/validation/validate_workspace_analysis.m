@@ -168,6 +168,14 @@ end
 
 function result = validateWorkspaceGeometryPropagation(robot,options)
 
+if ~isfield(robot.params,'geometry')
+    result.skipped = true;
+    result.reason = "URDF geometry is changed by editing/re-exporting the robot-specific URDF.";
+    result.success = true;
+    fprintf('Workspace geometry propagation skipped for URDF-backed model.\n');
+    return;
+end
+
 params = robot.params;
 params.geometry.l2 = params.geometry.l2 + 0.05;
 robotB = loadRobot(robot.id,params);

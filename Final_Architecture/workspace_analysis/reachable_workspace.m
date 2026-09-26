@@ -53,12 +53,22 @@ workspace.volume = metrics.volume;
 workspace.density = metrics.density;
 workspace.figures = figures;
 workspace.summary = createSummary(robot,metrics,options);
+workspace.readiness = readinessMetadata(robot);
 
 fprintf('Workspace generation complete.\n');
 fprintf('Estimated maximum reach = %.3f m\n',workspace.radius.max);
 fprintf('Estimated minimum reach = %.3f m\n',workspace.radius.min);
 fprintf('Estimated occupied volume = %.3f m^3\n',workspace.volume.estimate);
 
+end
+
+function metadata = readinessMetadata(robot)
+if isfield(robot,'readiness')
+    metadata = robot.readiness;
+else
+    metadata.status = "UNSPECIFIED";
+    metadata.warnings = strings(0,1);
+end
 end
 
 function options = normalizeWorkspaceOptions(options,rootDir)

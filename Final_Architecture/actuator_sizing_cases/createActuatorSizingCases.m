@@ -1,5 +1,6 @@
 function cases = createActuatorSizingCases(robot)
 % CREATEACTUATORSIZINGCASES Preliminary, traceable load-case definitions.
+assertSizingReady(robot);
 q = deg2rad([0 20 -30 0 20 0]);
 limits = robot.params.joints.positionLimits;
 if numel(q) ~= robot.structure.dof || any(q < limits(:,1).' | q > limits(:,2).')
@@ -82,4 +83,14 @@ cases(8).path.orientationMode="followArc";
 cases(8).enabled=false;
 cases(8).dataStatus="FAILED_CONTINUITY_TRIAL";
 cases(8).disabledReason="No continuous branch met the current spatial joint-step limit at sample 2; revisit tool orientation and path spacing before enabling.";
+end
+
+function assertSizingReady(robot)
+if isfield(robot,'readiness') && ...
+        isfield(robot.readiness,'actuatorSizingAllowed') && ...
+        ~robot.readiness.actuatorSizingAllowed
+    error('sizing:RobotNotReady', ...
+        'Actuator sizing is blocked for %s: %s',robot.id, ...
+        strjoin(robot.readiness.warnings,' '));
+end
 end

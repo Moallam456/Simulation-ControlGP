@@ -41,13 +41,12 @@ show(robot.model,q0,'Parent',ax,'Frames','off','PreservePlot',false);
 hold(ax,'on');
 grid(ax,'on');
 axis(ax,'equal');
-reach = norm(robot.params.tool.TFlangeTCP(1:3,4));
-for i = 2:dof
-    reach = reach + norm(robot.chain.fixedTransforms{i}(1:3,4));
-end
-reach = reach + 0.15;
-baseHeight = norm(robot.chain.fixedTransforms{1}(1:3,4));
-axis(ax,[-reach reach -reach reach -0.2 baseHeight+reach]);
+[~,homeFrames] = forward_kinematics(robot,q0);
+homeOrigins = cellfun(@(T) T(1:3,4).',homeFrames,'UniformOutput',false);
+homeOrigins = vertcat(homeOrigins{:});
+reach = max(0.25,max(vecnorm(homeOrigins,2,2))) + 0.20;
+zMaximum = max(homeOrigins(:,3)) + 0.35*reach;
+axis(ax,[-reach reach -reach reach -0.2 zMaximum]);
 view(ax,135,25);
 xlabel(ax,'X (m)'); ylabel(ax,'Y (m)'); zlabel(ax,'Z (m)');
 [~,frames] = forward_kinematics(robot,q0);

@@ -3,7 +3,8 @@ function report = validate_robot_visuals(robot)
 if nargin < 1, robot = loadRobot(); end
 if ~isfield(robot.chain,'bodySegments') || ...
         ~isfield(robot.structure.frames,'baseStructure')
-    error('validation:MissingBodySegments','Robot lacks body-owned geometry.');
+    report = validateImportedVisuals(robot);
+    return;
 end
 q0 = robot.params.joints.homePosition;
 q3 = q0;
@@ -55,6 +56,24 @@ report.pass = report.maxEndpointError_m < 1e-10 && ...
     report.massError_kg < 1e-10;
 fprintf('Body-owned visual geometry: %s (endpoint error %.3e m)\n', ...
     string(report.pass),report.maxEndpointError_m);
+end
+
+function report = validateImportedVisuals(robot)
+allBodies = [{robot.model.Base} robot.model.Bodies];
+report.visualCounts = cellfun(@(body) numel(body.Visuals),allBodies);
+report.collisionCounts = cellfun(@(body) numel(body.Collisions),allBodies);
+report.maxFKError_m = 0;
+q = robot.params.joints.homePosition;
+for i = 1:robot.structure.dof
+    q(i) = min(robot.params.joints.positionLimits(i,2),q(i)+deg2rad(10));
+    [tcp,~] = forward_kinematics(robot,q);
+    expected = getTransform(robot.model,q,char(robot.structure.frames.endEffector));
+    report.maxFKError_m = max(report.maxFKError_m, ...
+        norm(tcp(1:3,4)-expected(1:3,4)));
+end
+report.pass = all(report.visualCounts>0) && all(report.collisionCounts>0) && ...
+    report.maxFKError_m < 1e-12;
+fprintf('Imported visual/collision geometry: %s\n',string(report.pass));
 end
 
 function p = worldCOM(model,q,body)

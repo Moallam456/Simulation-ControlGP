@@ -13,7 +13,8 @@ addpath( ...
     fullfile(rootDir,'validation'), ...
     fullfile(rootDir,'visualization'), ...
     fullfile(rootDir,'workspace_analysis'), ...
-    fullfile(rootDir,'dynamics_analysis'));
+    fullfile(rootDir,'dynamics_analysis'), ...
+    fullfile(rootDir,'actuator_sizing_cases'));
 
 if nargin < 1 || isempty(numTests)
     numTests = 100;
@@ -26,6 +27,20 @@ fprintf('=====================================\n');
 robot = loadRobot();
 
 results.loadRobot = validateLoadRobot(robot);
+if string(robot.id) == "robot_ver1"
+    results.robotVer1 = validate_robot_ver1(robot);
+    results.workspace = validate_workspace_analysis(robot);
+    results.plotSmoke = validatePlotSmoke(robot);
+    results.success = results.loadRobot.success && ...
+        results.robotVer1.pass && results.workspace.success && ...
+        results.plotSmoke.success;
+    printResult(results.success);
+    if ~results.success
+        error('run_all_validation:Failed', ...
+            'At least one validation check failed.');
+    end
+    return;
+end
 results.kinematics = validate_kinematics(robot,numTests);
 results.workspace = validate_workspace_analysis(robot);
 results.dynamics = validate_dynamics_analysis(robot);
@@ -49,6 +64,12 @@ if ~results.success
         'At least one validation check failed.');
 end
 
+end
+
+function printResult(success)
+fprintf('\n=====================================\n');
+fprintf('VALIDATION SUITE SUCCESS: %d\n',success);
+fprintf('=====================================\n');
 end
 
 function result = validateLoadRobot(robot)

@@ -4,6 +4,10 @@ modelCheck = validateDynamicModel(robot);
 if ~modelCheck.pass
     error('validation:InvalidDynamicModel','%s',strjoin(modelCheck.errors,newline));
 end
+if ~isfield(robot.params,'geometry')
+    report = validateImportedDynamics(robot,modelCheck);
+    return;
+end
 report.model = modelCheck;
 originalGravity = robot.model.Gravity;
 report.numerical = verifyDynamicsConsistency(robot,struct( ...
@@ -153,4 +157,26 @@ function tau = gravityTorqueWithScenario(robot,q,gravity)
 model = copy(robot.model);
 model.Gravity = gravity;
 tau = gravityTorque(model,q);
+end
+
+function report = validateImportedDynamics(robot,modelCheck)
+report.model = modelCheck;
+report.numerical = verifyDynamicsConsistency(robot,struct( ...
+    'gravity',[0 0 -9.81],'numSamples',12,'seed',19));
+q = robot.params.joints.homePosition;
+trajectory.time = [0;0.5;1.0];
+trajectory.q = repmat(q,3,1);
+trajectory.qd = zeros(3,robot.structure.dof);
+trajectory.qdd = zeros(3,robot.structure.dof);
+result = analyzeTrajectoryDynamics(robot,trajectory,struct('gravity',[0 0 -9.81]));
+model = copy(robot.model);
+model.Gravity = [0 0 -9.81];
+expected = gravityTorque(model,q);
+report.staticTorqueError_Nm = max(abs(result.torque.total(1,:)-expected));
+report.readinessPropagated = isfield(result.meta,'readiness') && ...
+    string(result.meta.readiness.status) == string(robot.readiness.status);
+report.pass = report.numerical.pass && report.staticTorqueError_Nm < 1e-10 && ...
+    report.readinessPropagated;
+fprintf('Imported-model dynamics consistency: %d\n',report.pass);
+fprintf('Static gravity torque error: %.3e N*m\n',report.staticTorqueError_Nm);
 end

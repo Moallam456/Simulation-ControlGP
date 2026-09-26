@@ -84,9 +84,20 @@ end
 
 function reach = nominalReach(robot)
 
-g = robot.params.geometry;
-reach = abs(g.l3) + abs(g.l4) + abs(g.l7) + ...
-    abs(g.l8) + abs(g.l9) + abs(g.l10);
+if isfield(robot.params,'geometry')
+    g = robot.params.geometry;
+    reach = abs(g.l3) + abs(g.l4) + abs(g.l7) + ...
+        abs(g.l8) + abs(g.l9) + abs(g.l10);
+else
+    q = robot.params.joints.homePosition;
+    origins = zeros(numel(robot.model.Bodies),3);
+    for i = 1:numel(robot.model.Bodies)
+        T = getTransform(robot.model,q,robot.model.Bodies{i}.Name);
+        origins(i,:) = T(1:3,4).';
+    end
+    reach = max(vecnorm(origins,2,2));
+end
+reach = max(reach,0.25);
 
 end
 
