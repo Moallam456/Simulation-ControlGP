@@ -17,17 +17,25 @@ fprintf('\n=====================================\n');
 fprintf('WORKSPACE ANALYSIS VALIDATION: %s\n',robot.id);
 fprintf('=====================================\n\n');
 
+options = struct();
 options.numSamples = 120;
 options.seed = 11;
 options.showPlot = false;
 options.saveFigure = false;
+options.cacheEnabled = false;
 
-workspaceA = reachable_workspace(robot,options);
-workspaceB = reachable_workspace(robot,options);
+workspaceA = workspaceAnalysis(robot,"reachable",options);
+options = workspaceA.settings;
+workspaceB = workspaceAnalysis(robot,"reachable",options);
 
 optionsDifferentSeed = options;
 optionsDifferentSeed.seed = 12;
-workspaceC = reachable_workspace(robot,optionsDifferentSeed);
+workspaceC = workspaceAnalysis(robot,"reachable",optionsDifferentSeed);
+collisionPlaceholder = workspaceAnalysis(robot,"collision_free",options);
+manipulabilityWorkspace = workspaceAnalysis(robot,"manipulability",options);
+usableOptions = options;
+usableOptions.manipulabilityThreshold = 0.40;
+usableWorkspace = workspaceAnalysis(robot,"usable",usableOptions);
 
 results.outputShape = validateOutputShape(robot,workspaceA,options);
 results.jointLimits = validateJointLimits(robot,workspaceA);
@@ -36,6 +44,13 @@ results.fkPoints = validateWorkspacePoints(robot,workspaceA);
 results.bounds = validateBounds(workspaceA);
 results.radius = validateRadius(workspaceA);
 results.volume = validateVolume(workspaceA);
+results.collisionPlaceholder = validateCollisionPlaceholder( ...
+    workspaceA,collisionPlaceholder);
+results.manipulability = validateManipulability( ...
+    robot,workspaceA,manipulabilityWorkspace);
+results.usable = validateUsableWorkspace( ...
+    manipulabilityWorkspace,usableWorkspace,usableOptions);
+results.cache = validateWorkspaceCache(robot,usableOptions);
 results.geometryPropagation = validateWorkspaceGeometryPropagation(robot,options);
 results.plotSmoke = validateWorkspacePlotSmoke(robot);
 
@@ -47,6 +62,10 @@ results.success = ...
     results.bounds.success && ...
     results.radius.success && ...
     results.volume.success && ...
+    results.collisionPlaceholder.success && ...
+    results.manipulability.success && ...
+    results.usable.success && ...
+    results.cache.success && ...
     results.geometryPropagation.success && ...
     results.plotSmoke.success;
 
@@ -54,6 +73,129 @@ fprintf('\n=====================================\n');
 fprintf('WORKSPACE VALIDATION SUCCESS: %d\n',results.success);
 fprintf('=====================================\n');
 
+end
+
+function result = validateWorkspaceCache(robot,baseOptions)
+cacheFolder = string(tempname);
+mkdir(cacheFolder);
+cleanup = onCleanup(@() removeTemporaryCache(cacheFolder));
+
+options = baseOptions;
+options.numSamples = 48;
+options.seed = 23;
+options.cacheEnabled = true;
+options.cacheFolder = cacheFolder;
+
+reachable = workspaceAnalysis(robot,"reachable",options);
+manipulability = workspaceAnalysis(robot,"manipulability",options);
+
+changedPresentation = options;
+changedPresentation.voxelSize = options.voxelSize/2;
+changedPresentation.manipulabilityThreshold = min( ...
+    1,options.manipulabilityThreshold+0.1);
+usable = workspaceAnalysis(robot,"usable",changedPresentation);
+
+params = robot.params;
+span = diff(params.joints.positionLimits(1,:));
+params.joints.positionLimits(1,2) = ...
+    params.joints.positionLimits(1,2)-0.01*span;
+changedRobot = loadRobot(robot.id,params);
+invalidated = workspaceAnalysis(changedRobot,"reachable",options);
+
+result.firstRunBuildsCore = reachable.cache.coreBuilt && ...
+    ~reachable.cache.coreHit;
+result.manipulabilityReusesCore = manipulability.cache.coreHit && ...
+    manipulability.cache.manipulabilityBuilt && ...
+    ~manipulability.cache.manipulabilityHit;
+result.presentationChangesReuseAll = usable.cache.coreHit && ...
+    usable.cache.manipulabilityHit && ...
+    isequal(manipulability.samples.q,usable.samples.q) && ...
+    isequal(manipulability.manipulability.values, ...
+        usable.manipulability.values);
+result.robotChangeInvalidates = invalidated.cache.coreBuilt && ...
+    ~invalidated.cache.coreHit;
+result.success = result.firstRunBuildsCore && ...
+    result.manipulabilityReusesCore && ...
+    result.presentationChangesReuseAll && ...
+    result.robotChangeInvalidates;
+
+fprintf('Workspace staged cache and invalidation valid: %d\n',result.success);
+end
+
+function removeTemporaryCache(folder)
+if isfolder(folder)
+    rmdir(folder,'s');
+end
+end
+
+function result = validateManipulability(robot,reachable,workspace)
+values = workspace.manipulability.values;
+indices = unique(round(linspace(1,numel(values),min(7,numel(values)))));
+expected = zeros(numel(indices),1);
+endEffector = char(robot.structure.frames.endEffector);
+
+for k = 1:numel(indices)
+    i = indices(k);
+    jacobian = geometricJacobian(robot.model,workspace.samples.q(i,:),endEffector);
+    sigma = svd(jacobian(4:6,:),'econ');
+    if sigma(1) <= eps(max(1,sigma(1)))
+        expected(k) = 0;
+    else
+        expected(k) = sigma(end)/sigma(1);
+    end
+end
+
+result.sameSamples = isequal(reachable.samples.q,workspace.samples.q) && ...
+    isequal(reachable.samples.points,workspace.samples.points);
+result.statusEvaluated = workspace.manipulability.status == "EVALUATED";
+result.finite = all(isfinite(values));
+result.bounded = all(values >= 0 & values <= 1);
+result.maxIndependentError = max(abs(values(indices)-expected));
+result.voxelDataValid = ...
+    size(workspace.manipulability.voxels.centers,2) == 3 && ...
+    all(isfinite(workspace.manipulability.voxels.max));
+result.success = result.sameSamples && result.statusEvaluated && ...
+    result.finite && result.bounded && ...
+    result.maxIndependentError < 1e-12 && result.voxelDataValid;
+
+fprintf('Inverse-condition manipulability valid: %d\n',result.success);
+end
+
+function result = validateUsableWorkspace(manipulability,usable,options)
+expectedMask = usable.manipulability.values >= ...
+    options.manipulabilityThreshold;
+
+result.sameSamples = ...
+    isequal(manipulability.samples.q,usable.samples.q) && ...
+    isequal(manipulability.samples.points,usable.samples.points) && ...
+    isequal(manipulability.manipulability.values, ...
+        usable.manipulability.values);
+result.maskExact = isequal(usable.masks.accepted,expectedMask);
+result.acceptedDataExact = ...
+    isequal(usable.accepted.sampleIndices,find(expectedMask)) && ...
+    isequal(usable.accepted.q,usable.samples.q(expectedMask,:)) && ...
+    isequal(usable.accepted.points,usable.samples.points(expectedMask,:));
+result.collisionStatusHonest = ...
+    usable.collision.status == "NOT_EVALUATED" && ...
+    ~usable.collision.filterApplied;
+result.success = result.sameSamples && result.maskExact && ...
+    result.acceptedDataExact && result.collisionStatusHonest;
+
+fprintf('Usable-workspace threshold filtering valid: %d\n',result.success);
+end
+
+function result = validateCollisionPlaceholder(reachable,collisionWorkspace)
+result.sameSamples = isequal(reachable.samples.q,collisionWorkspace.samples.q) && ...
+    isequal(reachable.samples.points,collisionWorkspace.samples.points);
+result.notEvaluated = collisionWorkspace.collision.status == "NOT_EVALUATED" && ...
+    ~collisionWorkspace.collision.filterApplied && ...
+    all(isnan(collisionWorkspace.masks.collisionFree));
+result.noFalseRejections = ...
+    isempty(collisionWorkspace.collision.rejectedSampleIndices) && ...
+    all(collisionWorkspace.masks.accepted);
+result.success = result.sameSamples && result.notEvaluated && ...
+    result.noFalseRejections;
+fprintf('Collision placeholder is honest and lossless: %d\n',result.success);
 end
 
 function result = validateOutputShape(robot,workspace,options)
@@ -180,8 +322,8 @@ params = robot.params;
 params.geometry.l2 = params.geometry.l2 + 0.05;
 robotB = loadRobot(robot.id,params);
 
-workspaceA = reachable_workspace(robot,options);
-workspaceB = reachable_workspace(robotB,options);
+workspaceA = workspaceAnalysis(robot,"reachable",options);
+workspaceB = workspaceAnalysis(robotB,"reachable",options);
 
 deltaZ = workspaceB.points(:,3) - workspaceA.points(:,3);
 
@@ -195,31 +337,33 @@ end
 
 function result = validateWorkspacePlotSmoke(robot)
 
+options = struct();
 options.numSamples = 25;
 options.seed = 1;
 options.showPlot = true;
 options.saveFigure = false;
+options.cacheEnabled = false;
+options.manipulabilityThreshold = 0.40;
 
 oldVisibility = get(0,'DefaultFigureVisible');
 set(0,'DefaultFigureVisible','off');
 cleanup = onCleanup(@() set(0,'DefaultFigureVisible',oldVisibility));
 
 try
-    workspace = reachable_workspace(robot,options);
-    result.hasFigureFields = isfield(workspace.figures,'pointCloud') && ...
-        isfield(workspace.figures,'xyDensity') && ...
-        isfield(workspace.figures,'xzDensity') && ...
-        isfield(workspace.figures,'yzDensity');
-    result.hasValidHandles = isvalid(workspace.figures.pointCloud) && ...
-        isvalid(workspace.figures.xyDensity) && ...
-        isvalid(workspace.figures.xzDensity) && ...
-        isvalid(workspace.figures.yzDensity);
-    result.success = result.hasFigureFields && result.hasValidHandles;
-    result.message = "reachable_workspace plot path executed.";
-    close(workspace.figures.pointCloud);
-    close(workspace.figures.xyDensity);
-    close(workspace.figures.xzDensity);
-    close(workspace.figures.yzDensity);
+    analysisTypes = ["reachable","collision_free","manipulability","usable"];
+    valid = false(size(analysisTypes));
+    for i = 1:numel(analysisTypes)
+        workspace = workspaceAnalysis(robot,analysisTypes(i),options);
+        valid(i) = isfield(workspace.figures,'main') && ...
+            isfield(workspace.figures,'pointCloud') && ...
+            isvalid(workspace.figures.main) && ...
+            isvalid(workspace.figures.pointCloud);
+        close(workspace.figures.main);
+    end
+    result.analysisTypes = analysisTypes;
+    result.valid = valid;
+    result.success = all(valid);
+    result.message = "All workspace plot paths executed.";
 catch ME
     close all;
     result.success = false;

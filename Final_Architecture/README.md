@@ -13,7 +13,7 @@ robot = loadRobot();
 show(robot.model, robot.params.joints.homePosition, 'Frames', 'on')
 plot_robot(robot, robot.params.joints.homePosition)
 
-report = validate_robot_ver1(robot);
+report = validate_kinematics(robot);
 ```
 
 To change the default robot, edit only:
@@ -48,9 +48,8 @@ Generic analyses should accept this `robot` struct explicitly.
 
 ## Robot-Specific Folder
 
-The default robot is `robot_ver1`. It is imported from its robot-specific
-URDF package and currently has five joints because Joint 6 is absent from
-the CAD export.
+The current default robot is `initial_trial`. The imported `robot_ver1`
+model remains available explicitly for testing the URDF-backed workflow.
 
 ```text
 robots/robot_ver1/
@@ -146,11 +145,73 @@ params = baseRobot.params;
 params.geometry.l2 = params.geometry.l2 + 0.05;
 
 robot = loadRobot("initial_trial", params);
-workspace = reachable_workspace(robot, 10000);
+workspace = workspaceAnalysis(robot,"reachable",struct('showPlot',false));
 ```
 
 Generic code outside `robots/` should consume the loaded `robot` interface
 and should not call `robots/initial_trial` files directly.
+
+## Workspace Analysis
+
+The public workspace commands take no arguments. They load whichever robot
+is selected by `projectConfig().robotID`. `projectConfig.m` owns only project
+selection; it does not own analysis settings.
+
+```matlab
+reachable_workspace
+collision_free_workspace
+manipulability_workspace
+usable_workspace
+```
+
+`collision_free_workspace` is currently an explicit pass-through stage. It
+stores collision fields as `NOT_EVALUATED`/`NaN`, rejects no configurations,
+and labels its figure accordingly. It must not be interpreted as verified
+collision-free until the collision-analysis layer is connected.
+
+The shared `workspaceAnalysis` engine retains every sampled configuration,
+its TCP transform and point, its voxel assignment, and acceptance masks.
+Future collision checks will mark and retain rejected configurations rather
+than deleting their records. The public plots show one 3-D workspace figure;
+common sampling, voxel, plotting, saving, and cache defaults are kept near the
+top of `workspaceAnalysis.m`. The chosen manipulability index and motion type
+are kept near the top of `manipulability_workspace.m`.
+
+`manipulability_workspace` evaluates the linear TCP Jacobian at every sampled
+configuration. Its inverse-condition score is
+`sigma_min(Jv)/sigma_max(Jv)`: zero is singular or nearly singular, while a
+value nearer one means the TCP can generate linear motion more evenly in all
+directions. The plot uses one point per occupied Cartesian voxel and colors it
+by the best sampled score available in that voxel. Raw per-configuration
+scores remain in `workspace.manipulability.values`.
+
+`usable_workspace` keeps only sampled configurations whose inverse-condition
+score is at least the clearly labeled `manipulabilityThreshold` near the top
+of that file. It retains all
+original samples and records the accepted subset under `workspace.accepted`.
+Because collision analysis is not connected yet, both manipulability and
+usable plots clearly report that collision filtering was not evaluated. The
+usable workspace therefore becomes final only after the collision layer is
+implemented.
+
+Expensive workspace data is reused automatically. `prepareWorkspaceDataset`
+caches sampled joint configurations, FK transforms, and TCP points. Jacobian
+and manipulability values are added lazily only when a manipulability-based
+analysis first requests them. The cache signature includes the robot
+kinematics, joint limits, TCP, sampling method, seed, and sample count, so a
+relevant model or sampling change rebuilds the data automatically. Plotting,
+voxel size, and manipulability-threshold changes reuse the same expensive
+calculations. The cache settings live with the other common workspace defaults
+near the top of `workspaceAnalysis.m`:
+
+```matlab
+settings.cacheEnabled = true;
+settings.cacheFolder = fullfile(rootDir,'workspace_analysis','cache');
+```
+
+Generated cache and figure-output folders are ignored by Git. Cache behavior
+is reported in `workspace.cache` and validated by
+`validate_workspace_analysis`.
 
 ## Dynamics Analysis
 
