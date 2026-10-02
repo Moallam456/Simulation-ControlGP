@@ -10,6 +10,8 @@ arguments
 end
 
 rootDir = fileparts(fileparts(mfilename('fullpath')));
+addpath(fullfile(rootDir,'analysis_cache'), ...
+    fullfile(rootDir,'collision_analysis'));
 
 % Common workspace settings. Edit these defaults to change every public
 % workspace command. Analysis-specific choices remain in their entry files.
@@ -22,7 +24,7 @@ settings.showPlot = true;
 settings.saveFigure = false;
 settings.outputFolder = fullfile(rootDir,'workspace_analysis','outputs');
 settings.cacheEnabled = true;
-settings.cacheFolder = fullfile(rootDir,'workspace_analysis','cache');
+settings.cacheFolder = fullfile(rootDir,'analysis_cache','data');
 
 % Internal identity of the implemented manipulability algorithm. The public
 % manipulability file states these choices explicitly. Usable workspace uses
@@ -51,6 +53,9 @@ fprintf('Requesting %d configurations with %s sampling...\n', ...
 
 requiresManipulability = ismember(analysisType,["manipulability","usable"]);
 requirements.manipulability = requiresManipulability;
+requiresCollision = ismember(analysisType,["collision_free", ...
+    "manipulability","usable"]);
+requirements.collision = requiresCollision;
 dataset = prepareWorkspaceDataset(robot,settings,requirements);
 qSamples = dataset.q;
 transforms = dataset.transforms;
@@ -59,24 +64,28 @@ sampling = dataset.sampling;
 sampleCount = size(qSamples,1);
 
 jointLimitValid = true(sampleCount,1);
-collisionFree = NaN(sampleCount,1);
-collisionClearance = NaN(sampleCount,1);
-
-collision.status = "NOT_EVALUATED";
-collision.filterApplied = false;
-collision.message = ...
-    "Collision analysis has not been implemented; no configurations were rejected.";
-collision.isCollisionFree = collisionFree;
-collision.clearance_m = collisionClearance;
-collision.rejectedSampleIndices = zeros(0,1);
-collision.rejectedConfigurations = zeros(0,robot.structure.dof);
-collision.rejectedPoints = zeros(0,3);
-
-if ismember(analysisType,["collision_free","manipulability","usable"])
-    warning('workspace:CollisionNotEvaluated','%s',collision.message);
-end
-
+collision = initializeCollision(sampleCount,robot.structure.dof);
 collisionAccepted = true(sampleCount,1);
+if requiresCollision
+    rawCollision = dataset.collision;
+    collision.status = rawCollision.status;
+    collision.filterApplied = true;
+    collision.message = "Self-colliding configurations were rejected.";
+    collision.isCollisionFree = rawCollision.isCollisionFree;
+    collision.clearance_m = rawCollision.minimumClearance;
+    collision.hasRequiredClearance = rawCollision.hasRequiredClearance;
+    collision.isNearCollision = rawCollision.isNearCollision;
+    collision.closestBodyPair = rawCollision.closestBodyPair;
+    collision.witnessPoints = rawCollision.witnessPoints;
+    collision.skippedSelfCollisionPairs = ...
+        rawCollision.settings.skippedSelfCollisionPairs;
+    collision.rejectedSampleIndices = find(~rawCollision.isCollisionFree);
+    collision.rejectedConfigurations = ...
+        qSamples(~rawCollision.isCollisionFree,:);
+    collision.rejectedPoints = points(~rawCollision.isCollisionFree,:);
+    collision.summary = rawCollision.summary;
+    collisionAccepted = rawCollision.isCollisionFree;
+end
 baseAccepted = jointLimitValid & collisionAccepted;
 manipulability = initializeManipulability(sampleCount,robot.structure.dof,settings);
 if requiresManipulability
@@ -93,7 +102,7 @@ else
 end
 
 metrics = computeMetrics(points(accepted,:),settings);
-figures = plotWorkspace(robot,analysisType,points(accepted,:),metrics, ...
+figures = plotWorkspace(robot,analysisType,points,accepted,metrics, ...
     settings,collision,manipulability);
 
 voxelCoordinates = floor(points/settings.voxelSize);
@@ -110,7 +119,7 @@ workspace.samples.points = points;
 workspace.samples.voxelCoordinates = voxelCoordinates;
 workspace.samples.voxelIndex = sampleVoxelIndex;
 workspace.masks.jointLimitValid = jointLimitValid;
-workspace.masks.collisionFree = collisionFree;
+workspace.masks.collisionFree = collision.isCollisionFree;
 workspace.masks.aboveManipulabilityThreshold = ...
     manipulability.isAboveThreshold;
 workspace.masks.accepted = accepted;
@@ -134,10 +143,30 @@ workspace.summary = createSummary(workspace);
 workspace.readiness = readinessMetadata(robot);
 
 fprintf('%s\n',workspace.summary);
-if ismember(analysisType,["collision_free","manipulability","usable"])
-    fprintf('Collision status: NOT_EVALUATED (pass-through result)\n');
+if requiresCollision
+    fprintf('Collision filter: %d free, %d colliding, %d near the %.1f mm margin.\n', ...
+        nnz(collision.isCollisionFree),nnz(~collision.isCollisionFree), ...
+        nnz(collision.isNearCollision), ...
+        1000*dataset.collision.settings.minimumClearance);
 end
 
+end
+
+function collision = initializeCollision(sampleCount,dof)
+collision.status = "NOT_REQUESTED";
+collision.filterApplied = false;
+collision.message = "Collision analysis was not requested for this result.";
+collision.isCollisionFree = NaN(sampleCount,1);
+collision.clearance_m = NaN(sampleCount,1);
+collision.hasRequiredClearance = false(sampleCount,1);
+collision.isNearCollision = false(sampleCount,1);
+collision.closestBodyPair = strings(sampleCount,2);
+collision.witnessPoints = NaN(sampleCount,6);
+collision.skippedSelfCollisionPairs = strings(0,2);
+collision.rejectedSampleIndices = zeros(0,1);
+collision.rejectedConfigurations = zeros(0,dof);
+collision.rejectedPoints = zeros(0,3);
+collision.summary = struct();
 end
 
 function settings = applyOverrides(settings,overrides)
@@ -262,10 +291,12 @@ result.values = raw.values;
 result.conditionNumber = raw.conditionNumber;
 result.singularValues = raw.singularValues;
 result.isAboveThreshold = raw.values >= settings.manipulabilityThreshold;
-result.statistics.min = min(raw.values(eligible));
-result.statistics.max = max(raw.values(eligible));
-result.statistics.mean = mean(raw.values(eligible));
-result.statistics.median = median(raw.values(eligible));
+if any(eligible)
+    result.statistics.min = min(raw.values(eligible));
+    result.statistics.max = max(raw.values(eligible));
+    result.statistics.mean = mean(raw.values(eligible));
+    result.statistics.median = median(raw.values(eligible));
+end
 result.voxels = aggregateManipulability( ...
     points(eligible,:),raw.values(eligible),settings.voxelSize);
 end
@@ -362,9 +393,12 @@ density.numBins = numBins;
 end
 
 function figures = plotWorkspace( ...
-        robot,analysisType,points,metrics,settings,collision,manipulability)
+        robot,analysisType,allPoints,accepted,metrics,settings,collision,manipulability)
 figures.main = [];
 figures.pointCloud = [];
+figures.robotAxes = [];
+figures.jointSliders = gobjects(0,1);
+figures.homeButton = [];
 figures.savedFiles = strings(0,1);
 if ~settings.showPlot && ~settings.saveFigure
     return;
@@ -373,9 +407,11 @@ if settings.saveFigure && ~isfolder(settings.outputFolder)
     mkdir(settings.outputFolder);
 end
 visibility = matlab.lang.OnOffSwitchState(settings.showPlot);
-figures.main = figure('Name',char(plotTitle(robot,analysisType,collision)), ...
-    'Color','w','Visible',visibility);
+figures.main = figure('Name',char(plotTitle(robot,analysisType)), ...
+    'Color','w','Visible',visibility,'NumberTitle','off', ...
+    'Position',[80 70 1280 720]);
 figures.pointCloud = figures.main;
+workspaceAxes = axes(figures.main,'Position',[0.07 0.11 0.65 0.81]);
 if ismember(analysisType,["manipulability","usable"])
     centers = manipulability.voxels.centers;
     values = manipulability.voxels.max;
@@ -384,36 +420,59 @@ if ismember(analysisType,["manipulability","usable"])
         centers = centers(keep,:);
         values = values(keep);
     end
-    scatter3(centers(:,1),centers(:,2),centers(:,3),12,values,'filled');
-    colorbarHandle = colorbar;
+    scatter3(workspaceAxes,centers(:,1),centers(:,2),centers(:,3), ...
+        12,values,'filled');
+    colorbarHandle = colorbar(workspaceAxes);
     colorbarHandle.Label.String = 'Linear inverse condition number';
     clim([0 1]);
     colormap(parula(256));
 else
-    scatter3(points(:,1),points(:,2),points(:,3),5, ...
-        'filled','MarkerFaceAlpha',0.35);
+    if analysisType == "collision_free"
+        colliding = ~collision.isCollisionFree;
+        scatter3(workspaceAxes,allPoints(colliding,1),allPoints(colliding,2), ...
+            allPoints(colliding,3),5,[0.78 0.82 0.86], ...
+            'filled','MarkerFaceAlpha',0.12);
+        hold(workspaceAxes,'on');
+        scatter3(workspaceAxes,allPoints(accepted,1),allPoints(accepted,2), ...
+            allPoints(accepted,3),5,[0.00 0.35 0.68], ...
+            'filled','MarkerFaceAlpha',0.45);
+        legend(workspaceAxes, ...
+            {'Colliding configuration','Collision-free configuration'}, ...
+            'Location','southeast');
+    else
+        scatter3(workspaceAxes,allPoints(accepted,1),allPoints(accepted,2), ...
+            allPoints(accepted,3),5,'filled','MarkerFaceAlpha',0.35);
+    end
 end
-grid on;
-axis equal;
-xlabel('X (m)');
-ylabel('Y (m)');
-zlabel('Z (m)');
-title(plotTitle(robot,analysisType,collision),'Interpreter','none');
+grid(workspaceAxes,'on');
+axis(workspaceAxes,'equal');
+xlabel(workspaceAxes,'X (m)');
+ylabel(workspaceAxes,'Y (m)');
+zlabel(workspaceAxes,'Z (m)');
+title(workspaceAxes,plotTitle(robot,analysisType),'Interpreter','none');
 if analysisType == "usable"
-    subtitle(sprintf([ ...
+    subtitle(workspaceAxes,sprintf([ ...
         '%d accepted configurations | index >= %.3f | ', ...
-        '%.0f mm voxels | collision filter not evaluated'], ...
-        size(points,1),manipulability.threshold,1000*metrics.voxels.size));
+        '%.0f mm voxels | collision-free only'], ...
+        nnz(accepted),manipulability.threshold,1000*metrics.voxels.size));
 elseif analysisType == "manipulability"
-    subtitle(sprintf([ ...
-        '%d sampled configurations | voxel color = best index | ', ...
-        '%.0f mm voxels | collision filter not evaluated'], ...
-        size(points,1),1000*metrics.voxels.size));
+    subtitle(workspaceAxes,sprintf([ ...
+        '%d collision-free configurations | voxel color = best index | ', ...
+        '%.0f mm voxels'],nnz(accepted),1000*metrics.voxels.size));
+elseif analysisType == "collision_free"
+    subtitle(workspaceAxes,sprintf([ ...
+        '%d collision-free | %d colliding shown in light gray | ', ...
+        '%.0f mm voxels | %.4f m^3 occupied'], ...
+        nnz(accepted),nnz(~accepted),1000*metrics.voxels.size, ...
+        metrics.volume.estimate));
 else
-    subtitle(sprintf('%d samples | %.0f mm voxels | %.4f m^3 occupied', ...
-        size(points,1),1000*metrics.voxels.size,metrics.volume.estimate));
+    subtitle(workspaceAxes,sprintf( ...
+        '%d samples | %.0f mm voxels | %.4f m^3 occupied', ...
+        size(allPoints,1),1000*metrics.voxels.size,metrics.volume.estimate));
 end
-view(135,25);
+view(workspaceAxes,135,25);
+[figures.robotAxes,figures.jointSliders,figures.homeButton] = ...
+    addWorkspaceRobotControls(robot,figures.main,workspaceAxes);
 if settings.saveFigure
     fileName = sprintf('%s_%s.png',robot.id,analysisType);
     filePath = fullfile(settings.outputFolder,fileName);
@@ -422,20 +481,166 @@ if settings.saveFigure
 end
 end
 
-function value = plotTitle(robot,analysisType,collision)
+function [robotAxes,sliders,homeButton] = ...
+        addWorkspaceRobotControls(robot,figureHandle,workspaceAxes)
+
+qHome = robot.params.joints.homePosition;
+qCurrent = qHome;
+limits = robot.params.joints.positionLimits;
+dof = robot.structure.dof;
+
+robotAxes = axes(figureHandle,'Position',workspaceAxes.Position, ...
+    'Color','none','HandleVisibility','off');
+drawRobot(false);
+
+workspaceLimits = [workspaceAxes.XLim;workspaceAxes.YLim;workspaceAxes.ZLim];
+bodyOrigins = zeros(numel(robot.model.BodyNames)+1,3);
+for bodyIndex = 1:numel(robot.model.BodyNames)
+    bodyTransform = getTransform(robot.model,qHome, ...
+        robot.model.BodyNames{bodyIndex});
+    bodyOrigins(bodyIndex+1,:) = bodyTransform(1:3,4).';
+end
+robotLimits = [min(bodyOrigins,[],1).' max(bodyOrigins,[],1).'];
+combinedLimits = [min(workspaceLimits(:,1),robotLimits(:,1)) ...
+    max(workspaceLimits(:,2),robotLimits(:,2))];
+padding = max(0.04,0.04*max(diff(combinedLimits,1,2)));
+combinedLimits = combinedLimits+[-padding padding];
+workspaceAxes.XLim = combinedLimits(1,:);
+workspaceAxes.YLim = combinedLimits(2,:);
+workspaceAxes.ZLim = combinedLimits(3,:);
+robotAxes.XLim = combinedLimits(1,:);
+robotAxes.YLim = combinedLimits(2,:);
+robotAxes.ZLim = combinedLimits(3,:);
+set([workspaceAxes robotAxes],'XLimMode','manual','YLimMode','manual', ...
+    'ZLimMode','manual');
+
+cameraLink = linkprop([workspaceAxes robotAxes],{ ...
+    'CameraPosition','CameraTarget','CameraUpVector','CameraViewAngle', ...
+    'Projection','View','XLim','YLim','ZLim'});
+setappdata(figureHandle,'WorkspaceAxesLink',cameraLink);
+
+panel = uipanel(figureHandle,'Title','Robot joint control', ...
+    'Units','normalized','Position',[0.77 0.08 0.21 0.84], ...
+    'BackgroundColor','w');
+tcpText = uicontrol(panel,'Style','text','Units','normalized', ...
+    'Position',[0.06 0.89 0.88 0.07],'BackgroundColor','w', ...
+    'HorizontalAlignment','left','FontWeight','bold');
+
+sliders = gobjects(dof,1);
+valueLabels = gobjects(dof,1);
+sliderListeners = cell(dof,1);
+isResetting = false;
+top = 0.84;
+rowHeight = min(0.115,0.67/max(1,dof));
+for jointIndex = 1:dof
+    y = top-(jointIndex-1)*rowHeight;
+    uicontrol(panel,'Style','text','Units','normalized', ...
+        'Position',[0.06 y 0.18 0.045], ...
+        'String',char(robot.structure.jointNames(jointIndex)), ...
+        'BackgroundColor','w','HorizontalAlignment','left');
+    valueLabels(jointIndex) = uicontrol(panel,'Style','text', ...
+        'Units','normalized','Position',[0.72 y 0.23 0.045], ...
+        'BackgroundColor','w','HorizontalAlignment','right');
+    span = limits(jointIndex,2)-limits(jointIndex,1);
+    smallStep = min(1,deg2rad(1)/span);
+    largeStep = min(1,deg2rad(10)/span);
+    sliders(jointIndex) = uicontrol(panel,'Style','slider', ...
+        'Units','normalized','Position',[0.06 y-0.045 0.89 0.045], ...
+        'Min',limits(jointIndex,1),'Max',limits(jointIndex,2), ...
+        'Value',qHome(jointIndex),'SliderStep',[smallStep largeStep], ...
+        'Callback',[]);
+    sliderListeners{jointIndex} = addlistener( ...
+        sliders(jointIndex),'Value','PostSet', ...
+        @(~,~) moveJoint(jointIndex,sliders(jointIndex).Value));
+end
+
+homeButton = uicontrol(panel,'Style','pushbutton','Units','normalized', ...
+    'Position',[0.06 0.035 0.42 0.065],'String','Home', ...
+    'Callback',@resetHome);
+framesToggle = uicontrol(panel,'Style','checkbox','Units','normalized', ...
+    'Position',[0.54 0.035 0.40 0.065],'String','Frames', ...
+    'Value',0,'BackgroundColor','w','Callback',@toggleFrames);
+setappdata(figureHandle,'WorkspaceRobotConfiguration',qCurrent);
+setappdata(figureHandle,'WorkspaceRobotSliderListeners',sliderListeners);
+updateReadouts();
+
+    function moveJoint(jointIndex,value)
+        if isResetting
+            return;
+        end
+        qCurrent(jointIndex) = value;
+        setappdata(figureHandle,'WorkspaceRobotConfiguration',qCurrent);
+        drawRobot(true);
+        updateReadouts();
+    end
+
+    function resetHome(~,~)
+        qCurrent = qHome;
+        isResetting = true;
+        for index = 1:dof
+            sliders(index).Value = qCurrent(index);
+        end
+        isResetting = false;
+        setappdata(figureHandle,'WorkspaceRobotConfiguration',qCurrent);
+        drawRobot(true);
+        updateReadouts();
+    end
+
+    function toggleFrames(~,~)
+        drawRobot(false);
+    end
+
+    function drawRobot(fastUpdate)
+        if exist('framesToggle','var') && isgraphics(framesToggle) && ...
+                framesToggle.Value
+            frames = 'on';
+        else
+            frames = 'off';
+        end
+        show(robot.model,qCurrent,'Parent',robotAxes, ...
+            'Visuals','on','Collisions','off','Frames',frames, ...
+            'PreservePlot',false,'FastUpdate',fastUpdate);
+        robotAxes.Color = 'none';
+        robotAxes.XColor = 'none';
+        robotAxes.YColor = 'none';
+        robotAxes.ZColor = 'none';
+        robotAxes.GridLineStyle = 'none';
+        robotAxes.XLim = combinedLimitOrCurrent(1,robotAxes.XLim);
+        robotAxes.YLim = combinedLimitOrCurrent(2,robotAxes.YLim);
+        robotAxes.ZLim = combinedLimitOrCurrent(3,robotAxes.ZLim);
+        view(robotAxes,workspaceAxes.View);
+    end
+
+    function values = combinedLimitOrCurrent(dimension,currentValues)
+        if exist('combinedLimits','var')
+            values = combinedLimits(dimension,:);
+        else
+            values = currentValues;
+        end
+    end
+
+    function updateReadouts()
+        for index = 1:dof
+            valueLabels(index).String = sprintf('%+.1f deg', ...
+                rad2deg(qCurrent(index)));
+        end
+        T = getTransform(robot.model,qCurrent, ...
+            char(robot.structure.frames.endEffector));
+        tcpText.String = sprintf('TCP  [%.3f, %.3f, %.3f] m', ...
+            T(1,4),T(2,4),T(3,4));
+    end
+
+end
+
+function value = plotTitle(robot,analysisType)
 if analysisType == "reachable"
     value = "Reachable Workspace - " + string(robot.id);
-elseif analysisType == "collision_free" && ~collision.filterApplied
-    value = "Collision-Free Workspace - " + string(robot.id) + ...
-        " [COLLISION FILTER NOT EVALUATED]";
 elseif analysisType == "collision_free"
     value = "Collision-Free Workspace - " + string(robot.id);
 elseif analysisType == "manipulability"
-    value = "Manipulability Workspace - " + string(robot.id) + ...
-        " [COLLISION FILTER NOT EVALUATED]";
+    value = "Manipulability Workspace - " + string(robot.id);
 else
-    value = "Usable Workspace - " + string(robot.id) + ...
-        " [COLLISION FILTER NOT EVALUATED]";
+    value = "Usable Workspace - " + string(robot.id);
 end
 end
 

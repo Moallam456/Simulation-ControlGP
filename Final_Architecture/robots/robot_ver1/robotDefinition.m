@@ -17,9 +17,9 @@ model = importrobot(urdfPath,'DataFormat','row');
 movingBodies = model.Bodies(cellfun( ...
     @(body) ~strcmpi(body.Joint.Type,'fixed'),model.Bodies));
 dof = numel(movingBodies);
-if dof ~= 5
+if dof ~= 6
     error('robot_ver1:UnexpectedDOF', ...
-        'The intermediate robot_ver1 export must contain five moving joints; found %d.',dof);
+        'robot_ver1 must contain six moving joints; found %d.',dof);
 end
 
 limits = repmat([-pi pi],dof,1);
@@ -40,11 +40,15 @@ jointAxes = cell2mat(cellfun(@(body) body.Joint.JointAxis,movingBodies, ...
     'UniformOutput',false).');
 
 params.id = "robot_ver1";
-params.displayName = "robot_ver1 (incomplete five-axis CAD export)";
+params.displayName = "robot_ver1 (preliminary six-axis CAD model)";
 params.source.type = "URDF";
 params.source.urdf = string(urdfPath);
 params.source.packageFolder = string(packageFolder);
 params.source.massPropertyAccuracy = "Inventor Low";
+params.source.joint6Geometry = ...
+    "URDF_Files(ver2): Joint_6 transform, axis, and End_Effector mesh";
+params.source.endEffectorDynamics = ...
+    "Inventor screenshots converted from world coordinates and kg*mm^2 to the End_Effector body frame in SI units";
 params.joints.positionLimits = limits;
 params.joints.homePosition = home;
 params.joints.limitStatus = "PROVISIONAL";
@@ -52,21 +56,21 @@ params.joints.limitSource = "Temporary MATLAB metadata; not the zero limits in t
 params.links = bodyParameterArray(movingBodies);
 params.base.source = "Base inertial properties remain authoritative in the URDF";
 params.base.note = "MATLAB does not expose inertial properties on rigidBodyTree.Base.";
-params.tool.name = "temporary Wrist_2 TCP";
-params.tool.bodyName = "Wrist_2";
+params.tool.name = "temporary End_Effector TCP";
+params.tool.bodyName = "End_Effector";
 params.tool.TFlangeTCP = eye(4);
 params.tool.status = "PROVISIONAL";
 
 structure.name = "robot_ver1";
-structure.model = "URDF-backed intermediate CAD export";
+structure.model = "URDF-backed preliminary six-axis CAD model";
 structure.dof = dof;
 structure.bodyNames = bodyNames;
 structure.jointNames = jointNames;
 structure.jointTypes = repmat("revolute",1,dof);
 structure.jointAxes = jointAxes;
 structure.frames.base = string(model.BaseName);
-structure.frames.endEffector = "Wrist_2";
-structure.frames.flange = "Wrist_2";
+structure.frames.endEffector = "End_Effector";
+structure.frames.flange = "End_Effector";
 structure.hasSphericalWrist = false;
 
 chain.convention = "URDF parent-to-child joint origins";
@@ -74,22 +78,22 @@ chain.source = string(urdfPath);
 chain.homeFrames = homeFrames(model,home,structure);
 chain.usesRigidBodyTreeFK = true;
 
-readiness.status = "INCOMPLETE_FIVE_AXIS_MODEL";
+readiness.status = "PRELIMINARY_SIX_AXIS_MODEL";
 readiness.warnings = [
-    "Joint 6 is missing from the current CAD export."
-    "All five joint limits are provisional [-pi, pi]."
-    "The TCP is temporarily the Wrist_2 body-frame origin."
+    "All six joint limits are provisional [-pi, pi]."
+    "The TCP is temporarily the End_Effector body-frame origin."
     "Inventor mass properties were exported at Low accuracy."
     "The Link_3/Wrist_2 home collision is unresolved; MATLAB uses convex mesh collision geometry."
     "Final actuator sizing is not allowed for this model."];
-readiness.joint6Missing = true;
+readiness.joint6Missing = false;
 readiness.jointLimitsProvisional = true;
 readiness.tcpProvisional = true;
 readiness.massPropertiesPreliminary = true;
 readiness.unresolvedHomeCollision = ["Link_3" "Wrist_2"];
 readiness.actuatorSizingAllowed = false;
 readiness.allowedUses = ["FK" "IK" "visualization" "workspace" ...
-    "collision inspection" "preliminary rigid-body dynamics"];
+    "collision inspection" "trajectory generation" ...
+    "preliminary rigid-body dynamics"];
 
 definition.params = params;
 definition.structure = structure;
@@ -109,7 +113,8 @@ if isfield(overrides.joints,'positionLimits')
     candidate = overrides.joints.positionLimits;
     if ~isequal(size(candidate),[dof 2]) || any(~isfinite(candidate(:))) || ...
             any(candidate(:,1) >= candidate(:,2))
-        error('robot_ver1:InvalidLimits','Joint limits must be a finite 5-by-2 array.');
+        error('robot_ver1:InvalidLimits', ...
+            'Joint limits must be a finite %d-by-2 array.',dof);
     end
     limits = candidate;
 end
@@ -117,7 +122,8 @@ if isfield(overrides.joints,'homePosition')
     candidate = reshape(overrides.joints.homePosition,1,[]);
     if numel(candidate) ~= dof || any(~isfinite(candidate)) || ...
             any(candidate < limits(:,1).' | candidate > limits(:,2).')
-        error('robot_ver1:InvalidHome','Home position must contain five limit-valid angles.');
+        error('robot_ver1:InvalidHome', ...
+            'Home position must contain %d limit-valid angles.',dof);
     end
     home = candidate;
 end

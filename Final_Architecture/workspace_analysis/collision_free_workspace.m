@@ -1,16 +1,14 @@
 function varargout = collision_free_workspace()
-% COLLISION_FREE_WORKSPACE Plot the collision-workspace pipeline stage.
-%
-% Collision filtering is intentionally a pass-through until the collision
-% analysis is implemented. Results are marked NOT_EVALUATED and must not be
-% interpreted as verified collision-free configurations.
+% COLLISION_FREE_WORKSPACE Plot all samples and highlight collision-free ones.
 %
 % Command Window:
 %   collision_free_workspace
 
 rootDir = fileparts(fileparts(mfilename('fullpath')));
 addpath(rootDir,fullfile(rootDir,'kinematics'), ...
-    fullfile(rootDir,'workspace_analysis'));
+    fullfile(rootDir,'workspace_analysis'), ...
+    fullfile(rootDir,'analysis_cache'), ...
+    fullfile(rootDir,'collision_analysis'));
 
 config = projectConfig();
 robot = loadRobot(config.robotID);

@@ -1,4 +1,4 @@
-function model = buildModel(params,structure,chain)
+function model = buildModel(params,structure,chain,collision)
 
 % BUILDMODEL Build the initial_trial rigidBodyTree.
 %
@@ -14,6 +14,8 @@ baseJoint = rigidBodyJoint('base_fixed','fixed');
 setFixedTransform(baseJoint,eye(4));
 baseBody.Joint = baseJoint;
 baseBody = assignBaseProperties(baseBody,params,chain);
+baseBody = addConfiguredCollisionGeometry( ...
+    baseBody,structure.frames.baseStructure,collision);
 addBody(model,baseBody,char(structure.frames.base));
 parentName = structure.frames.baseStructure;
 
@@ -36,6 +38,8 @@ for i = 1:structure.dof
         body = addSimplifiedGeometry(body,params.links(i),chain,i);
     end
 
+    body = addConfiguredCollisionGeometry(body,structure.bodyNames(i),collision);
+
     addBody(model,body,char(parentName));
     parentName = structure.bodyNames(i);
 
@@ -47,6 +51,8 @@ setFixedTransform(tcpJoint,params.tool.TFlangeTCP);
 tcpBody.Joint = tcpJoint;
 tcpBody = assignToolMassProperties(tcpBody,params.tool);
 tcpBody = addToolGeometry(tcpBody,params.tool);
+tcpBody = addConfiguredCollisionGeometry( ...
+    tcpBody,structure.frames.endEffector,collision);
 addBody(model,tcpBody,char(structure.frames.flange));
 
 end
@@ -69,7 +75,6 @@ I = inertiaAtBodyOrigin(I,mass,body.CenterOfMass);
 body.Inertia = [I(1,1) I(2,2) I(3,3) I(2,3) I(1,3) I(1,2)];
 T = cylinderTransform(points(1,:),points(end,:));
 body = tryAddVisual(body,"Cylinder",[radius length],T,[0.15 0.15 0.15]);
-body = tryAddCollision(body,"Cylinder",[radius length],T);
 
 end
 
@@ -224,9 +229,7 @@ end
 % extends backward along local -Z toward the flange.
 T = cylinderTransform([0 0 -length],[0 0 0]);
 body = tryAddVisual(body,"Cylinder",[radius length],T,[0.05 0.05 0.05]);
-body = tryAddCollision(body,"Cylinder",[radius length],T);
 body = tryAddVisual(body,"Sphere",1.4*radius,eye(4),[0.8 0.1 0.1]);
-body = tryAddCollision(body,"Sphere",1.4*radius,eye(4));
 
 end
 
@@ -263,13 +266,11 @@ for i = 1:size(pointsBody,1)-1
 
     T = cylinderTransform(p1,p2);
     body = tryAddVisual(body,"Cylinder",[radius length],T,color);
-    body = tryAddCollision(body,"Cylinder",[radius length],T);
 end
 
 jointT = eye(4);
 jointT(1:3,4) = pointsBody(end,:).';
 body = tryAddVisual(body,"Sphere",jointRadius,jointT,color);
-body = tryAddCollision(body,"Sphere",jointRadius,jointT);
 
 end
 
@@ -286,11 +287,22 @@ end
 
 end
 
-function body = tryAddCollision(body,shape,dimensions,T)
+function body = addConfiguredCollisionGeometry(body,bodyName,collision)
 
-try
-    addCollision(body,char(shape),dimensions,T);
-catch
+if isempty(collision) || ~isfield(collision,'available') || ~collision.available
+    return;
+end
+
+matches = find([collision.geometry.bodyName] == string(bodyName));
+for i = matches
+    shape = collision.geometry(i);
+    try
+        addCollision(body,char(shape.type),shape.dimensions,shape.transform);
+    catch exception
+        error('buildModel:CollisionAttachmentFailed', ...
+            'Could not attach %s collision shape to %s: %s', ...
+            shape.type,bodyName,exception.message);
+    end
 end
 
 end

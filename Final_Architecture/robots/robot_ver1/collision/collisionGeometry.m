@@ -10,7 +10,10 @@ for i = 1:numel(meshNames)
 end
 
 collision.available = all(isfile(meshFiles));
+collision.schemaVersion = 1;
 collision.source = "URDF STL meshes used as visual and collision geometry";
+collision.status = "PRELIMINARY";
+collision.minimumClearance = 0.010; % m, provisional design margin
 collision.bodyNames = ["Base_Link" structure.bodyNames];
 collision.meshFiles = meshFiles;
 collision.approximation = "MATLAB represents mesh collision geometry using convex meshes.";

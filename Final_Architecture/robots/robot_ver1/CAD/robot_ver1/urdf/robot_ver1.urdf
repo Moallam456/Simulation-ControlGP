@@ -334,4 +334,64 @@
       effort="0"
       velocity="0" />
   </joint>
+  <link
+    name="End_Effector">
+    <!-- Corrected Inventor properties: world COM and COM tensor were
+         transformed into the End_Effector body frame, then converted to SI. -->
+    <inertial>
+      <origin
+        xyz="-0.048946282 -0.059068151 -0.077557237"
+        rpy="0 0 0" />
+      <mass
+        value="0.183" />
+      <inertia
+        ixx="0.000241999187156"
+        ixy="0.000008229225813"
+        ixz="0.000002610293907"
+        iyy="0.000036433142805"
+        iyz="-0.000006208691663"
+        izz="0.000234464670039" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://robot_ver1/meshes/End_Effector.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://robot_ver1/meshes/End_Effector.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Joint_6"
+    type="revolute">
+    <origin
+      xyz="-0.033 0 -0.1005"
+      rpy="0 1.5708 0" />
+    <parent
+      link="Wrist_2" />
+    <child
+      link="End_Effector" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="0"
+      upper="0"
+      effort="0"
+      velocity="0" />
+  </joint>
 </robot>

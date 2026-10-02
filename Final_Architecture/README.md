@@ -48,8 +48,8 @@ Generic analyses should accept this `robot` struct explicitly.
 
 ## Robot-Specific Folder
 
-The current default robot is `initial_trial`. The imported `robot_ver1`
-model remains available explicitly for testing the URDF-backed workflow.
+The current default robot is `robot_ver1`. It is the imported, preliminary
+six-axis model used for URDF-backed analysis.
 
 ```text
 robots/robot_ver1/
@@ -65,17 +65,19 @@ The URDF is the sole source for `robot_ver1` transforms, mesh geometry,
 masses, COM locations, and inertias. `robotDefinition.m` imports it with
 row-vector configurations and derives the common `params`, `structure`, and
 `chain` metadata from the imported tree. MATLAB applies temporary `[-pi,pi]`
-limits and zero home positions to the five joints without changing the CAD
-export. The temporary TCP is the `Wrist_2` origin.
+limits and zero home positions to the six joints without changing the CAD
+export. The temporary TCP is the `End_Effector` origin.
 
-`robot.readiness` records that Joint 6 is missing, limits and TCP are
+`Joint_6` and the `End_Effector` mesh come from the preserved
+`URDF_Files(ver2)` export. Its older first-five-joint geometry and inertial
+data are not used. `robot.readiness` records that limits and TCP are
 provisional, Inventor properties used Low accuracy, and final actuator sizing
-is blocked. Preliminary FK, numerical IK, visualization, workspace,
-collision inspection, and rigid-body dynamics remain available. The current
+is blocked. FK, numerical IK, visualization, workspace, trajectory generation,
+collision inspection, and preliminary rigid-body dynamics remain available. The current
 `Link_3`/`Wrist_2` home collision is intentionally reported as unresolved;
 MATLAB treats imported mesh collision geometry as convex.
 
-The earlier programmatic model remains available explicitly:
+The earlier programmatic `initial_trial` model remains available explicitly:
 
 ```text
 robots/initial_trial/
@@ -102,11 +104,14 @@ applied separately about the axes in `robotStructure.m`. The active model
 does not use a DH or modified-DH table.
 
 `buildModel.m` constructs the MATLAB `rigidBodyTree` from supplied
-`params`, `structure`, and `chain`. It does not read robot parameters itself,
-which allows parameter sweeps.
+`params`, `structure`, `chain`, and collision definitions. It does not read
+robot parameters itself, which allows parameter sweeps.
 The fixed `base_structure` owns the O0-to-J1 segment; each `link_i` owns
 its outgoing Ji-to-J(i+1) segment, not the segment ending at Ji. The TCP
 body owns the J6-to-TCP structure and tool. The J6 frame has zero mass.
+`collision/collisionGeometry.m` is the single source for the preliminary
+collision shapes and their body-relative transforms. `buildModel.m` attaches
+those exact shapes and stops if an attachment fails.
 
 `gravityCandidatePoses.m` defines robot-specific stationary screening poses.
 `loadRobot` exposes these as `robot.gravityPoses`; generic gravity analyses
@@ -133,9 +138,9 @@ the entire path and choose a continuous joint sequence.
 For diagnostics, pass `struct('method',"numerical")` to test that fallback.
 
 For `robot_ver1`, `robot.solveIK` uses deterministic numerical multistart IK.
-It validates returned candidates with FK and joint limits, but it cannot
-invent the missing sixth degree of freedom and does not perform collision
-rejection.
+It validates returned candidates with FK and joint limits, but does not
+perform collision rejection or guarantee that every possible IK branch was
+found.
 
 ## Parameter Sweep Pattern
 
@@ -164,15 +169,22 @@ manipulability_workspace
 usable_workspace
 ```
 
-`collision_free_workspace` is currently an explicit pass-through stage. It
-stores collision fields as `NOT_EVALUATED`/`NaN`, rejects no configurations,
-and labels its figure accordingly. It must not be interpreted as verified
-collision-free until the collision-analysis layer is connected.
+Every workspace figure overlays the selected robot's visual geometry. Use
+the joint sliders on the right to pose it with the mouse within its mechanical
+limits. Angle and TCP-position readouts update continuously; `Home` restores
+the configured home position, and `Frames` toggles body frames. Rotating or
+zooming the 3-D view keeps the robot and workspace point cloud synchronized.
+
+`collision_free_workspace` evaluates self-collision at every sampled
+configuration. Its graph retains every reachable TCP point: points reached by
+colliding configurations are light gray, while collision-free configurations
+are blue. Rejected configurations remain stored under `workspace.collision`
+instead of being discarded.
 
 The shared `workspaceAnalysis` engine retains every sampled configuration,
 its TCP transform and point, its voxel assignment, and acceptance masks.
-Future collision checks will mark and retain rejected configurations rather
-than deleting their records. The public plots show one 3-D workspace figure;
+Collision checks mark and retain rejected configurations rather than deleting
+their records. The public plots show one 3-D workspace figure;
 common sampling, voxel, plotting, saving, and cache defaults are kept near the
 top of `workspaceAnalysis.m`. The chosen manipulability index and motion type
 are kept near the top of `manipulability_workspace.m`.
@@ -189,39 +201,60 @@ scores remain in `workspace.manipulability.values`.
 score is at least the clearly labeled `manipulabilityThreshold` near the top
 of that file. It retains all
 original samples and records the accepted subset under `workspace.accepted`.
-Because collision analysis is not connected yet, both manipulability and
-usable plots clearly report that collision filtering was not evaluated. The
-usable workspace therefore becomes final only after the collision layer is
-implemented.
+Both manipulability and usable workspaces first reject self-colliding
+configurations. The usable result therefore combines mechanical joint limits,
+self-collision rejection, and the manipulability threshold.
 
-Expensive workspace data is reused automatically. `prepareWorkspaceDataset`
-caches sampled joint configurations, FK transforms, and TCP points. Jacobian
-and manipulability values are added lazily only when a manipulability-based
-analysis first requests them. The cache signature includes the robot
-kinematics, joint limits, TCP, sampling method, seed, and sample count, so a
-relevant model or sampling change rebuilds the data automatically. Plotting,
-voxel size, and manipulability-threshold changes reuse the same expensive
-calculations. The cache settings live with the other common workspace defaults
-near the top of `workspaceAnalysis.m`:
+Expensive analysis data is reused automatically. The generic
+`analysis_cache/prepareWorkspaceDataset.m` caches sampled joint
+configurations, FK transforms, TCP points, collision/clearance results, and
+manipulability values in stages. Its signatures include kinematics, limits,
+TCP, sampling, collision geometry, skipped pairs, clearance margin, and the
+implemented environment status. Relevant physical changes invalidate the
+correct stage; plotting, voxel-size, and manipulability-threshold changes
+reuse the expensive calculations. Cache settings live near the top of
+`workspaceAnalysis.m`:
 
 ```matlab
 settings.cacheEnabled = true;
-settings.cacheFolder = fullfile(rootDir,'workspace_analysis','cache');
+settings.cacheFolder = fullfile(rootDir,'analysis_cache','data');
 ```
 
 Generated cache and figure-output folders are ignored by Git. Cache behavior
 is reported in `workspace.cache` and validated by
 `validate_workspace_analysis`.
 
+## Collision Analysis
+
+`collision_analysis/analyzeCollisions.m` is the generic calculation layer.
+For each supplied configuration it records self-collision, closest clearance,
+the relevant body pair, and available witness points. Directly connected
+bodies are skipped, along with robot-specific intentional-contact pairs from
+`robot.collision.ignoredSelfCollisionPairs`. A geometric collision and a
+clearance-margin failure are kept as separate results.
+
+Run the interactive collision-geometry inspector with no arguments:
+
+```matlab
+inspectCollisions
+```
+
+It samples the robot selected in `projectConfig.m` and lets you step through
+colliding, near-collision, and clear configurations. Collision shapes for
+`initial_trial` are still preliminary cylinders and spheres, so these results
+validate the software pipeline, not final mechanical clearance. Environment,
+workpiece, and trajectory collision checking are later layers.
+
 ## Dynamics Analysis
 
 `dynamics_analysis/` contains generic ideal rigid-body joint-side dynamics.
-The fixed tool (2.0 kg) and J6-to-EE structure (0.71 kg) are separate
+For `initial_trial`, the fixed tool (2.0 kg) and J6-to-EE structure (0.71 kg) are separate
 component masses combined once in the TCP body. Link and joint-module masses
 are defined in `robotParameters.m`; `buildModel.m` estimates COM and inertia
 from the simplified geometry unless explicit COM/inertia are supplied.
-All current body properties are preliminary estimates. Confirm them against
-CAD, datasheets, and measured properties before actuator selection.
+For `robot_ver1`, body masses, COMs, and inertias come only from its URDF.
+All current body properties remain preliminary. Confirm them against CAD,
+datasheets, and measured properties before actuator selection.
 
 ```matlab
 robot = loadRobot();
@@ -241,8 +274,8 @@ figures = plotDynamicsResults(results,struct('joint',2));
 
 For `robot_ver1`, these results are explicitly preliminary and include
 `results.meta.readiness`. Calls to `createActuatorSizingCases` and
-`runActuatorSizingCases` are blocked until Joint 6, final limits, TCP, mass
-property accuracy, and collision status are resolved.
+`runActuatorSizingCases` are blocked until final limits, TCP, mass-property
+accuracy, and collision status are resolved.
 
 `results` contains `meta`, `time`, `state.q/qd/qdd`,
 `torque.total/gravity/inertial/velocity/residual`, `power.joint`,

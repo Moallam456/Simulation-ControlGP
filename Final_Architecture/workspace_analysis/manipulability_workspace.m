@@ -13,7 +13,9 @@ settings.manipulabilityMotion = "linear";
 
 rootDir = fileparts(fileparts(mfilename('fullpath')));
 addpath(rootDir,fullfile(rootDir,'kinematics'), ...
-    fullfile(rootDir,'workspace_analysis'));
+    fullfile(rootDir,'workspace_analysis'), ...
+    fullfile(rootDir,'analysis_cache'), ...
+    fullfile(rootDir,'collision_analysis'));
 
 config = projectConfig();
 robot = loadRobot(config.robotID);

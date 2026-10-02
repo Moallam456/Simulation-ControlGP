@@ -4,15 +4,16 @@ function varargout = usable_workspace()
 % Command Window:
 %   usable_workspace
 %
-% Collision filtering is currently a pass-through. The returned result and
-% figure are marked provisional until collision analysis is connected.
+% Self-colliding configurations are removed before applying the threshold.
 
 % Usable-workspace setting. Change this value to keep more or fewer points.
 manipulabilityThreshold = 0.40;
 
 rootDir = fileparts(fileparts(mfilename('fullpath')));
 addpath(rootDir,fullfile(rootDir,'kinematics'), ...
-    fullfile(rootDir,'workspace_analysis'));
+    fullfile(rootDir,'workspace_analysis'), ...
+    fullfile(rootDir,'analysis_cache'), ...
+    fullfile(rootDir,'collision_analysis'));
 
 config = projectConfig();
 robot = loadRobot(config.robotID);

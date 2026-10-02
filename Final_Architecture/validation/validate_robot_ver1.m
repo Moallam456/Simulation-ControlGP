@@ -1,5 +1,5 @@
 function report = validate_robot_ver1(robot)
-% VALIDATE_ROBOT_VER1 Acceptance checks for the incomplete URDF-backed model.
+% VALIDATE_ROBOT_VER1 Acceptance checks for the six-axis URDF-backed model.
 
 if nargin < 1 || isempty(robot)
     robot = loadRobot("robot_ver1");
@@ -12,13 +12,13 @@ if string(robot.id) ~= "robot_ver1"
     error('validation:WrongRobot','Expected robot_ver1, received %s.',robot.id);
 end
 
-expectedBodies = ["Link_1" "Link_2" "Link_3" "Wrist_1" "Wrist_2"];
-expectedJoints = ["Joint_1" "Joint_2" "Joint_3" "Joint_4" "Joint_5"];
-report.topology = robot.structure.dof == 5 && ...
+expectedBodies = ["Link_1" "Link_2" "Link_3" "Wrist_1" "Wrist_2" "End_Effector"];
+expectedJoints = ["Joint_1" "Joint_2" "Joint_3" "Joint_4" "Joint_5" "Joint_6"];
+report.topology = robot.structure.dof == 6 && ...
     string(robot.model.BaseName) == "Base_Link" && ...
     isequal(robot.structure.bodyNames,expectedBodies) && ...
     isequal(robot.structure.jointNames,expectedJoints) && ...
-    string(robot.structure.frames.endEffector) == "Wrist_2";
+    string(robot.structure.frames.endEffector) == "End_Effector";
 
 report.meshes = validateMeshes(robot);
 report.massProperties = validateMassProperties(robot);
@@ -36,7 +36,7 @@ report.collision.status = "UNRESOLVED";
 report.collision.note = robot.collision.approximation;
 
 report.readiness = isfield(robot,'readiness') && ...
-    robot.readiness.joint6Missing && ...
+    ~robot.readiness.joint6Missing && ...
     robot.readiness.jointLimitsProvisional && ...
     robot.readiness.tcpProvisional && ...
     robot.readiness.massPropertiesPreliminary && ...
@@ -51,7 +51,7 @@ report.pass = report.topology && report.meshes.pass && ...
     report.actuatorSizingBlocked && report.initialTrialRegression;
 
 fprintf('\nrobot_ver1 validation\n');
-fprintf('  Topology and five-axis endpoint: %d\n',report.topology);
+fprintf('  Topology and six-axis endpoint:  %d\n',report.topology);
 fprintf('  URDF visual/collision meshes:    %d\n',report.meshes.pass);
 fprintf('  CAD mass properties:             %d\n',report.massProperties.pass);
 fprintf('  FK / IK / dynamics:              %d / %d / %d\n', ...
@@ -73,24 +73,26 @@ result.filesExist = all(isfile(robot.collision.meshFiles));
 document = xmlread(char(robot.params.source.urdf));
 nodes = document.getElementsByTagName('mesh');
 result.uris = strings(nodes.getLength,1);
-result.urisValid = nodes.getLength == 12;
+result.urisValid = nodes.getLength == 14;
 for i = 0:nodes.getLength-1
     uri = string(nodes.item(i).getAttribute('filename'));
     result.uris(i+1) = uri;
     result.urisValid = result.urisValid && startsWith(uri,"package://robot_ver1/meshes/");
 end
 result.pass = all(result.visualCounts == 1) && ...
-    all(result.collisionCounts == 1) && result.filesExist && result.urisValid;
+    all(result.collisionCounts == 1) && result.filesExist && ...
+    result.urisValid && validBinarySTL(robot.collision.meshFiles(end));
 end
 
 function result = validateMassProperties(robot)
-expectedMass = [16.058 9.843 7.576 4.535 4.535];
+expectedMass = [16.058 9.843 7.576 4.535 4.535 0.183];
 expectedCOM = [
     -0.106451 -0.056736 0.101055148
      0.007556557 -0.323779148 -0.034318388
     -0.182291207 -0.065672927 0.003309351
     -0.066487521 0.010831776 -0.091501332
-     0.069619270 -0.003019655 0.095127911];
+     0.069619270 -0.003019655 0.095127911
+    -0.048946282 -0.059068151 -0.077557237];
 expectedInertia = cat(3, ...
     symmetricTensor(0.136863054,0.105710534,0.182139824, ...
         -0.050765210,0.032896087,0.018485160), ...
@@ -101,7 +103,10 @@ expectedInertia = cat(3, ...
     symmetricTensor(0.003082819,0.012487247,0.010901109, ...
         0.000162991,-0.001849359,0.000291435), ...
     symmetricTensor(0.003224584,0.012390637,0.010855955, ...
-        -0.001152678,-0.001836682,-0.000274620));
+        -0.001152678,-0.001836682,-0.000274620), ...
+    symmetricTensor(0.000241999187156,0.000036433142805, ...
+        0.000234464670039,0.000008229225813, ...
+        0.000002610293907,-0.000006208691663));
 result.maxMassError = 0;
 result.maxCOMError = 0;
 result.maxInertiaError = 0;
@@ -169,10 +174,10 @@ result.pass = result.maxTransformError < 1e-12;
 end
 
 function result = validateIKRoundTrip(robot)
-qTarget = [0.20 -0.30 0.25 0.10 -0.20];
+qTarget = [0.20 -0.30 0.25 0.10 -0.20 0.15];
 target = forward_kinematics(robot,qTarget);
 solution = robot.solveIK(target,struct( ...
-    'qSeed',qTarget+[0.02 -0.02 0.02 -0.02 0.02], ...
+    'qSeed',qTarget+[0.02 -0.02 0.02 -0.02 0.02 -0.02], ...
     'numStarts',6,'seed',4));
 result.valid = solution.valid;
 result.positionError = solution.info.positionError;
@@ -184,9 +189,9 @@ end
 function result = validateDynamics(robot)
 model = copy(robot.model);
 model.Gravity = [0 0 -9.81];
-q = [0.10 -0.20 0.15 0.05 -0.10];
-qd = [0.05 -0.03 0.02 0.01 -0.02];
-qdd = [0.10 -0.08 0.06 0.04 -0.02];
+q = [0.10 -0.20 0.15 0.05 -0.10 0.08];
+qd = [0.05 -0.03 0.02 0.01 -0.02 0.01];
+qdd = [0.10 -0.08 0.06 0.04 -0.02 0.03];
 result.gravityTorque = gravityTorque(model,q);
 result.massMatrix = massMatrix(model,q);
 result.inverseDynamics = inverseDynamics(model,q,qd,qdd);
@@ -194,6 +199,26 @@ result.minimumEigenvalue = min(eig(0.5*(result.massMatrix+result.massMatrix.')))
 result.pass = all(isfinite(result.gravityTorque)) && ...
     all(isfinite(result.massMatrix(:))) && ...
     all(isfinite(result.inverseDynamics)) && result.minimumEigenvalue > 0;
+end
+
+function valid = validBinarySTL(filePath)
+
+info = dir(filePath);
+valid = numel(info) == 1 && info.bytes >= 84;
+if ~valid
+    return;
+end
+file = fopen(filePath,'rb');
+if file < 0
+    valid = false;
+    return;
+end
+cleanup = onCleanup(@() fclose(file)); %#ok<NASGU>
+fseek(file,80,'bof');
+triangleCount = fread(file,1,'uint32=>double','ieee-le');
+valid = isscalar(triangleCount) && ...
+    info.bytes == 84+50*triangleCount;
+
 end
 
 function result = validateRendering(robot)

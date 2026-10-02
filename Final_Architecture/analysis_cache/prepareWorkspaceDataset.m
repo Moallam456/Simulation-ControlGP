@@ -1,7 +1,7 @@
 function dataset = prepareWorkspaceDataset(robot,settings,requirements)
-% PREPAREWORKSPACEDATASET Build or reuse expensive workspace sample data.
-% FK data and manipulability data are cached in stages. Plotting, voxel
-% grouping, thresholds, and analysis-specific masks are intentionally not.
+% PREPAREWORKSPACEDATASET Build or reuse expensive shared analysis data.
+% FK, collision, and manipulability data are cached in stages. Plotting,
+% voxel grouping, thresholds, and display choices are intentionally not.
 
 arguments
     robot (1,1) struct
@@ -11,16 +11,22 @@ end
 
 needsManipulability = isfield(requirements,'manipulability') && ...
     logical(requirements.manipulability);
+needsCollision = isfield(requirements,'collision') && ...
+    logical(requirements.collision);
 cacheEnabled = logical(settings.cacheEnabled);
 cacheFile = cacheFileFor(robot,settings);
 kinematicSignature = createKinematicSignature(robot);
 samplingSignature = createSamplingSignature(settings);
 manipulabilitySignature = createManipulabilitySignature(settings);
+collisionSignature = createCollisionSignature(robot);
 
 status.enabled = cacheEnabled;
 status.file = string(cacheFile);
 status.coreHit = false;
 status.coreBuilt = false;
+status.collisionRequested = needsCollision;
+status.collisionHit = false;
+status.collisionBuilt = false;
 status.manipulabilityRequested = needsManipulability;
 status.manipulabilityHit = false;
 status.manipulabilityBuilt = false;
@@ -48,7 +54,7 @@ else
     fprintf('Workspace dataset: building configurations and FK.\n');
     [qSamples,sampling] = sampleConfigurations(robot,settings);
     [transforms,points] = evaluateForwardKinematics(robot,qSamples);
-    cacheData.schemaVersion = 1;
+    cacheData.schemaVersion = 2;
     cacheData.kinematicSignature = kinematicSignature;
     cacheData.samplingSignature = samplingSignature;
     cacheData.core.q = qSamples;
@@ -57,8 +63,26 @@ else
     cacheData.core.sampling = sampling;
     cacheData.manipulability = struct();
     cacheData.manipulabilitySignature = struct();
+    cacheData.collision = struct();
+    cacheData.collisionSignature = struct();
     status.coreBuilt = true;
     cacheDirty = true;
+end
+
+if needsCollision
+    if hasMatchingCollision(cacheData,collisionSignature)
+        status.collisionHit = true;
+        fprintf('Shared analysis dataset: reusing cached collision results.\n');
+    else
+        fprintf('Shared analysis dataset: calculating self-collision and clearance.\n');
+        collisionOptions.minimumClearance = collisionSignature.minimumClearance;
+        collisionOptions.showProgress = size(cacheData.core.q,1) >= 1000;
+        cacheData.collision = analyzeCollisions( ...
+            robot,cacheData.core.q,collisionOptions);
+        cacheData.collisionSignature = collisionSignature;
+        status.collisionBuilt = true;
+        cacheDirty = true;
+    end
 end
 
 if needsManipulability
@@ -88,13 +112,18 @@ if needsManipulability
 else
     dataset.manipulability = struct();
 end
+if needsCollision
+    dataset.collision = cacheData.collision;
+else
+    dataset.collision = struct();
+end
 dataset.cache = status;
 
 end
 
 function tf = hasMatchingCore(cacheData,kinematicSignature,samplingSignature)
 tf = isstruct(cacheData) && ...
-    isfield(cacheData,'schemaVersion') && cacheData.schemaVersion == 1 && ...
+    isfield(cacheData,'schemaVersion') && cacheData.schemaVersion == 2 && ...
     isfield(cacheData,'kinematicSignature') && ...
     isequaln(cacheData.kinematicSignature,kinematicSignature) && ...
     isfield(cacheData,'samplingSignature') && ...
@@ -110,6 +139,17 @@ tf = isstruct(cacheData) && ...
     all(isfinite(cacheData.core.q(:))) && ...
     all(isfinite(cacheData.core.points(:))) && ...
     all(isfinite(cacheData.core.transforms(:)));
+end
+
+function tf = hasMatchingCollision(cacheData,signature)
+tf = isfield(cacheData,'collisionSignature') && ...
+    isequaln(cacheData.collisionSignature,signature) && ...
+    isfield(cacheData,'collision') && ...
+    all(isfield(cacheData.collision, ...
+        {'isSelfColliding','isCollisionFree','minimumClearance', ...
+         'hasRequiredClearance','isNearCollision','closestBodyPair', ...
+         'witnessPoints'})) && ...
+    numel(cacheData.collision.isCollisionFree) == size(cacheData.core.q,1);
 end
 
 function tf = hasMatchingManipulability(cacheData,signature)
@@ -137,6 +177,26 @@ function signature = createManipulabilitySignature(settings)
 signature.index = settings.manipulabilityIndex;
 signature.motion = settings.manipulabilityMotion;
 signature.algorithmVersion = 1;
+end
+
+function signature = createCollisionSignature(robot)
+
+signature.algorithmVersion = 1;
+signature.robotID = string(robot.id);
+signature.environmentStatus = "NONE";
+signature.minimumClearance = 0.010;
+if isfield(robot,'collision') && isstruct(robot.collision)
+    if isfield(robot.collision,'minimumClearance')
+        signature.minimumClearance = robot.collision.minimumClearance;
+    end
+    signature.robotCollisionDefinition = robot.collision;
+else
+    signature.robotCollisionDefinition = struct();
+end
+signature.bodyNames = string(robot.model.BodyNames);
+signature.attachedShapeCounts = cellfun( ...
+    @(body) numel(body.Collisions),robot.model.Bodies);
+
 end
 
 function signature = createKinematicSignature(robot)

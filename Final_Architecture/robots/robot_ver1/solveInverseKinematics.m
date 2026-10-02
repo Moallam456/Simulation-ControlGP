@@ -10,7 +10,8 @@ dof = robot.structure.dof;
 limits = robot.params.joints.positionLimits;
 qSeed = reshape(option(options,'qSeed',robot.params.joints.homePosition),1,[]);
 if numel(qSeed) ~= dof || any(~isfinite(qSeed))
-    error('robot_ver1:InvalidIKSeed','qSeed must contain five finite angles.');
+    error('robot_ver1:InvalidIKSeed', ...
+        'qSeed must contain %d finite angles.',dof);
 end
 qSeed = min(max(qSeed,limits(:,1).'),limits(:,2).');
 numStarts = option(options,'numStarts',24);
@@ -71,7 +72,7 @@ if solutions.valid
 else
     solutions.info.message = "No limit-valid configuration reaches the exact target pose.";
 end
-solutions.info.analyticalStatus = "NOT_AVAILABLE_FOR_INCOMPLETE_FIVE_AXIS_MODEL";
+solutions.info.analyticalStatus = "NOT_CONFIGURED_FOR_ROBOT_VER1";
 solutions.info.collisionStatus = ...
     "NOT_FILTERED: mesh collisions require a separate collision check.";
 
