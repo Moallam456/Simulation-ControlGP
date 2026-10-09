@@ -5,6 +5,7 @@ function robot = loadRobot(robotID, params)
 % Usage:
 %   robot = loadRobot()
 %   robot = loadRobot("robot_ver1")
+%   robot = loadRobot("robot_ver2")
 %   robot = loadRobot("initial_trial", modifiedParams)
 %
 % Robot-specific code lives under:
@@ -77,12 +78,17 @@ robot.collision = collision;
 robot.gravityPoses = gravityPoses;
 robot.solveIK = @(targetPose,varargin) solveIK( ...
     robotFolder,targetPose,robot,varargin{:});
+robot.dynamicsCases = callInFolderIfFileExists( ...
+    robotFolder,'dynamicsTestCases.m', ...
+    "dynamicsTestCases",robot);
 
 end
 
 function robotFolder = robotFolderFor(rootDir,robotID)
 
 switch robotID
+    case "robot_ver2"
+        robotFolder = fullfile(rootDir,'robots','robot_ver2');
     case "robot_ver1"
         robotFolder = fullfile(rootDir,'robots','robot_ver1');
     case "initial_trial"

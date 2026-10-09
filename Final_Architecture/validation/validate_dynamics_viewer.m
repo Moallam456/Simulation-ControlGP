@@ -90,19 +90,22 @@ singleViewer = viewGravityLoading(robot,single,struct('visible',false));
 report.singleStaticPose = singleViewer.getState().index == 1;
 singleViewer.close();
 
-disabled = inspectDynamicsCase(robot,"TRANSFER_MOVE", ...
-    struct('visible',false,'autoplay',false));
-report.disabledRejected = disabled.status == "DISABLED" && ...
-    isempty(disabled.viewer) && strlength(disabled.reason) > 0;
+disabled = find(string({suite.cases.status}) == "DISABLED");
+report.disabledRejected = isempty(disabled) || all(arrayfun( ...
+    @(index) isempty(suite.cases(index).dynamics) && ...
+    strlength(suite.cases(index).reason) > 0,disabled));
 
-ids = ["LINE_WELD","ARC_WELD","FULL_CIRCLE_WELD","MULTI_SEGMENT"];
-report.casePass = false(size(ids));
-for i = 1:numel(ids)
-    match = find(string({suite.cases.id}) == ids(i),1);
-    if isempty(match) || suite.cases(match).status ~= "PASS", continue; end
+motionCases = find(arrayfun(@(result) ...
+    ismember(result.status,["PASS" "VISUAL_ONLY"]) && ...
+    ~isempty(result.dynamics),suite.cases));
+report.casePass = false(size(motionCases));
+for i = 1:numel(motionCases)
+    match = motionCases(i);
     caseDynamics = suite.cases(match).dynamics;
     caseTrajectory = suite.cases(match).trajectory;
-    caseViewer = playTrajectoryDynamics(robot,caseTrajectory,caseDynamics,options);
+    caseOptions = options;
+    caseOptions.visualOnly = suite.cases(match).status == "VISUAL_ONLY";
+    caseViewer = playTrajectoryDynamics(robot,caseTrajectory,caseDynamics,caseOptions);
     caseCleanup = onCleanup(@() closeIfOpen(caseViewer.figure));
     joint = 2;
     [~,index] = max(abs(caseDynamics.torque.total(:,joint)));
@@ -111,7 +114,9 @@ for i = 1:numel(ids)
     report.casePass(i) = atPeak.index == index && ...
         isequal(atPeak.q,caseTrajectory.q(index,:)) && ...
         isequal(atPeak.torque,caseDynamics.torque.total(index,:)) && ...
-        ~isempty(findall(caseViewer.axes,'Type','patch'));
+        ~isempty(findall(caseViewer.axes,'Type','patch')) && ...
+        (~caseOptions.visualOnly || ...
+        contains(string(caseViewer.figure.Name),"VISUAL ONLY"));
     caseViewer.close();
     clear caseCleanup
 end

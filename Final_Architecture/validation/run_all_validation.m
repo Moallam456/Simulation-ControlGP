@@ -43,6 +43,20 @@ if string(robot.id) == "robot_ver1"
     end
     return;
 end
+if string(robot.id) == "robot_ver2"
+    results.robotVer2 = validate_robot_ver2(robot);
+    results.workspace = validate_workspace_analysis(robot);
+    results.plotSmoke = validatePlotSmoke(robot);
+    results.success = results.loadRobot.success && ...
+        results.robotVer2.pass && results.workspace.success && ...
+        results.plotSmoke.success;
+    printResult(results.success);
+    if ~results.success
+        error('run_all_validation:Failed', ...
+            'At least one validation check failed.');
+    end
+    return;
+end
 results.kinematics = validate_kinematics(robot,numTests);
 results.collision = validate_collision_analysis(robot);
 results.workspace = validate_workspace_analysis(robot);

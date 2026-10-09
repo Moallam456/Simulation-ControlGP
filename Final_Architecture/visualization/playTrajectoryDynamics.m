@@ -6,9 +6,11 @@ if ~isfield(options,'joint'), options.joint = min(2,robot.structure.dof); end
 if ~isfield(options,'playbackRate'), options.playbackRate = 1; end
 if ~isfield(options,'autoplay'), options.autoplay = true; end
 if ~isfield(options,'visible'), options.visible = true; end
+if ~isfield(options,'visualOnly'), options.visualOnly = false; end
 validateInputs(robot,trajectory,dynamics,options);
 qualityLabel = "";
 if dynamics.meta.preliminary, qualityLabel = "PRELIMINARY "; end
+if options.visualOnly, qualityLabel = "VISUAL ONLY | " + qualityLabel; end
 
 t = trajectory.time;
 q = trajectory.q;
@@ -320,7 +322,8 @@ if ~isscalar(options.joint) || options.joint < 1 || ...
         options.joint > dof || options.joint ~= floor(options.joint) || ...
         ~isscalar(options.playbackRate) || ...
         ~ismember(options.playbackRate,[0.25 1 2]) || ...
-        ~isscalar(options.autoplay) || ~isscalar(options.visible)
+        ~isscalar(options.autoplay) || ~isscalar(options.visible) || ...
+        ~isscalar(options.visualOnly)
     error('viewer:InvalidOptions','Invalid joint, playbackRate, autoplay, or visible.');
 end
 end

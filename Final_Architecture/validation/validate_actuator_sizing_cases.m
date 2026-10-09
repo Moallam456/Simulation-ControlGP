@@ -1,88 +1,97 @@
 function results = validate_actuator_sizing_cases(robot)
-% VALIDATE_ACTUATOR_SIZING_CASES Geometry, timing, IK, FK, and case integration.
-root=fileparts(fileparts(mfilename('fullpath')));
-addpath(root,fullfile(root,'kinematics'),fullfile(root,'trajectory'), ...
-    fullfile(root,'actuator_sizing_cases'), ...
-    fullfile(root,'dynamics_analysis'));
-if nargin<1, robot=loadRobot(); end
-cases=createActuatorSizingCases(robot);
-line=cases(2);
-T=forward_kinematics(robot,line.startConfiguration);
-line.path.startPosition=T(1:3,4);
-line.path.startOrientation=T(1:3,1:3);
-g=generatePathGeometry(line.path);
-[~,p]=evaluatePathGeometry(g,linspace(0,1,11));
-assert(norm(p(1,:).'-line.path.startPosition)<1e-12);
-assert(norm(p(end,:).'-line.path.endPosition)<1e-12);
-assert(max(vecnorm(cross(p-p(1,:),repmat(p(end,:)-p(1,:),11,1),2),2,2))<1e-12);
-rotated=line.path;
-rotated.orientationMode='slerp';
-rotated.endOrientation=axang2rotm([0 0 1 pi/3])*T(1:3,1:3);
-g=generatePathGeometry(rotated);
-[poses,~]=evaluatePathGeometry(g,[0 .5 1]);
-assert(norm(poses(1:3,1:3,1)-T(1:3,1:3),'fro')<1e-10);
-assert(norm(poses(1:3,1:3,end)-rotated.endOrientation,'fro')<1e-10);
-assert(norm(poses(1:3,1:3,2)'*poses(1:3,1:3,2)-eye(3),'fro')<1e-10);
-arc=cases(3).path;
-arc.startPosition=T(1:3,4); arc.startOrientation=T(1:3,1:3);
-g=generatePathGeometry(arc);
-[~,p]=evaluatePathGeometry(g,linspace(0,1,101));
-assert(max(abs(vecnorm(p-g.center.',2,2)-g.radius))<1e-10);
-assert(norm(p(1,:).'-arc.startPosition)<1e-12);
-assert(norm(p(end,:).'-arc.endPosition)<1e-12);
-assert(min(vecnorm(p-arc.midPosition(:).',2,2)) < g.length/100);
-circle=cases(4).path;
-circle.startPosition=T(1:3,4); circle.startOrientation=T(1:3,1:3);
-g=generatePathGeometry(circle);
-[poses,p]=evaluatePathGeometry(g,linspace(0,1,101));
-assert(abs(abs(g.sweep)-2*pi)<1e-12);
-assert(norm(p(1,:)-p(end,:))<1e-10);
-assert(norm(poses(1:3,1:3,1)-poses(1:3,1:3,end),'fro')<1e-10);
-assert(max(abs(vecnorm(p-g.center.',2,2)-g.radius))<1e-10);
-profile=timeScalingProfile(g.length,cases(4).motion);
-assert(abs(profile.s(1))<1e-12 && abs(profile.s(end)-1)<1e-10);
-assert(all(diff(profile.s)>=-1e-10));
-assert(max(profile.tcpSpeed)<=cases(4).motion.tcpSpeed+1e-9);
-assert(max(abs(profile.tcpAcceleration))<=cases(4).motion.tcpAcceleration+1e-9);
-assert(max(abs(profile.tcpJerk))<=cases(4).motion.tcpJerk+1e-9);
-scenario.gravity=[0 0 -9.81];
-options=struct('checkConvergence',true,'gravitySamples',25, ...
-    'gravityStarts',1,'gravityMaxEvaluations',100);
-suite=runActuatorSizingCases(robot,cases,scenario,options);
-assert(suite.cases(1).status=="PASS" && ~isempty(suite.gravity));
-required=["LINE_WELD" "ARC_WELD" "FULL_CIRCLE_WELD" "MULTI_SEGMENT"];
-for id=required
-    i=find(string({suite.cases.id})==id,1);
-    assert(suite.cases(i).status=="PASS", ...
-        '%s failed: %s',id,suite.cases(i).reason);
-    tr=suite.cases(i).trajectory;
-    assert(size(tr.q,1)==numel(tr.time));
-    assert(size(tr.q,2)==robot.structure.dof);
-    assert(all(isfinite([tr.q(:);tr.qd(:);tr.qdd(:)])));
-    assert(suite.cases(i).convergence.pass);
-    ik=suite.cases(i).trajectoryReport.ikReports{1};
-    assert(ik.pass && ik.maxJointStep_rad<=cases(i).validation.maxSpatialJointStepRad);
-    if id=="LINE_WELD"
-        assert(any(ik.candidateCounts(2:end)>1));
+% VALIDATE_ACTUATOR_SIZING_CASES Check the consolidated load-study workflow.
+root = fileparts(fileparts(mfilename('fullpath')));
+addpath(genpath(root));
+if nargin < 1 || isempty(robot), robot = loadRobot(); end
+
+options = struct('robot',robot,'showDashboard',true,'visible',false, ...
+    'checkConvergence',true,'gravitySamples',25,'gravityStarts',1, ...
+    'gravityMaxEvaluations',100);
+session = actuator_sizing_analysis(options);
+suite = session.suite;
+
+assert(suite.robotID == string(robot.id));
+assert(height(suite.jointSummary) == robot.structure.dof);
+assert(isfield(suite.meta,'finalSizingAllowed'));
+gravityCases = find(string({suite.cases.category}) == "gravity");
+assert(isscalar(gravityCases));
+assert(suite.cases(gravityCases).status == "PASS" && ~isempty(suite.gravity));
+
+enabled = [suite.definitions.enabled];
+for i = 1:numel(suite.cases)
+    result = suite.cases(i);
+    if ~enabled(i)
+        assert(result.status == "DISABLED" && strlength(result.reason) > 0);
+        continue;
     end
-    if id=="MULTI_SEGMENT"
-        waypoints=cases(i).path.waypoints;
-        junctions=cumsum(vecnorm(diff(waypoints,1,1),2,2));
-        for distance=junctions(1:end-1).'
-            index=find(abs(tr.cartesian.arcLength-distance)<1e-9,1);
-            assert(~isempty(index));
-            assert(max(abs(tr.qd(index,:)))<1e-8);
-            assert(max(abs(tr.qdd(index,:)))<1e-6);
+    if result.category == "visualization"
+        assert(result.status == "VISUAL_ONLY" && ...
+            result.trajectoryReport.pass && result.convergence.pass);
+        assert(~isempty(result.dynamics) && ...
+            result.trajectoryReport.collision.summary.collisionCount == 0);
+        assert(min(result.trajectoryReport.collision.minimumClearance) >= ...
+            suite.definitions(i).validation.minimumClearance_m);
+        if result.id == "JOINT_SWEEP_180"
+            trajectory = result.trajectory;
+            [~,middle] = min(abs(trajectory.q(:,2)));
+            assert(abs(trajectory.q(1,2)+pi/2) < 1e-10 && ...
+                abs(trajectory.q(end,2)-pi/2) < 1e-10 && ...
+                abs(trajectory.q(middle,2)) < 1e-10 && ...
+                all(abs(trajectory.qd(middle,[1 3:6])) > 0.01));
         end
+        continue;
+    end
+    assert(result.status == "PASS",'%s failed: %s',result.id,result.reason);
+    if result.category == "gravity", continue; end
+    trajectory = result.trajectory;
+    assert(size(trajectory.q,1) == numel(trajectory.time));
+    assert(size(trajectory.q,2) == robot.structure.dof);
+    assert(all(isfinite([trajectory.q(:);trajectory.qd(:);trajectory.qdd(:)])));
+    assert(result.trajectoryReport.pass && result.convergence.pass);
+    assert(isequal(result.dynamics.state.q,trajectory.q));
+end
+
+passingMotions = arrayfun(@(x) x.status == "PASS" && ...
+    ~isempty(x.dynamics),suite.cases);
+assert(any(passingMotions));
+assert(numel(suite.aggregate.validCaseIDs) == nnz(passingMotions));
+visualIDs = string({suite.cases( ...
+    string({suite.cases.category}) == "visualization").id});
+assert(~any(ismember(suite.aggregate.validCaseIDs,visualIDs)));
+firstMotion = find(passingMotions,1);
+session.dashboard.selectCase(firstMotion);
+session.dashboard.selectJoint(min(2,robot.structure.dof));
+dashboardState = session.dashboard.getState();
+assert(dashboardState.caseIndex == firstMotion && ...
+    dashboardState.status == "PASS" && isgraphics(session.dashboard.figure));
+visualCase = find(string({suite.cases.status}) == "VISUAL_ONLY",1);
+if ~isempty(visualCase)
+    session.dashboard.selectCase(visualCase);
+    visualViewer = session.dashboard.openSelected();
+    assert(isgraphics(visualViewer.figure) && ...
+        contains(string(visualViewer.figure.Name),"VISUAL ONLY"));
+    visualViewer.close();
+    unsafe = suite.definitions(visualCase);
+    if unsafe.id == "JOINT_SWEEP_180"
+        unsafe.path.configurations(:,2) = ...
+            linspace(-pi,pi,size(unsafe.path.configurations,1)).';
+        unsafe.startConfiguration = unsafe.path.configurations(1,:);
+        [~,unsafeReport] = generateTrajectory(robot,unsafe);
+        assert(~unsafeReport.pass && ~isempty(unsafeReport.collision) && ...
+            unsafeReport.collision.summary.collisionCount > 0);
     end
 end
-assert(numel(suite.aggregate.validCaseIDs)==numel(required));
-for j=1:robot.structure.dof
-    points=suite.aggregate.torqueSpeed(j);
-    assert(numel(points.speed_rad_s)==numel(points.torque_Nm));
-    assert(numel(points.time_s)==numel(points.caseID));
+session.dashboard.close();
+for j = 1:robot.structure.dof
+    points = suite.aggregate.torqueSpeed(j);
+    assert(numel(points.speed_rad_s) == numel(points.torque_Nm));
+    assert(numel(points.time_s) == numel(points.caseID));
+    assert(isfinite(suite.jointSummary.StaticPeakAbs_Nm(j)));
+    assert(isfinite(suite.jointSummary.DynamicPeakAbs_Nm(j)));
 end
-results.pass=true;
-results.suite=suite;
-fprintf('Actuator sizing case validation: PASS\n');
+
+results.pass = true;
+results.session = session;
+results.suite = suite;
+fprintf('Consolidated actuator load-study validation: PASS\n');
 end

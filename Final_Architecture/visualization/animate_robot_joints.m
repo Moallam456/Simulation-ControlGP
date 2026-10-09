@@ -1,6 +1,7 @@
 function result = animate_robot_joints(robot,options)
 % ANIMATE_ROBOT_JOINTS Sweep selected joints one at a time for visual review.
 % Angles supplied in options are degrees; robot configurations remain radians.
+% With no inputs, animate the robot selected in projectConfig.m.
 root = fileparts(fileparts(mfilename('fullpath')));
 addpath(root,fullfile(root,'kinematics'));
 if nargin < 1 || isempty(robot), robot = loadRobot(); end

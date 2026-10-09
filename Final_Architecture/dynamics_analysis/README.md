@@ -14,12 +14,33 @@ It does not size a motor or gearbox and does not assume external process forces.
 | `summarizeDynamicsResults(results,robot)` | Builds joint summary and peak-event state records. |
 | `plotDynamicsResults(results,options)` | Plots torque, paired torque/speed, power, and optional decomposition for `options.joint`. |
 | `example_dynamics_workflow()` | Runnable example; Control can replace its generated trajectory with real motion arrays. |
+| `extreme_line_dynamics()` | Loads the robot selected in `projectConfig.m`, runs its robot-specific 300 mm outer-reach line, and opens the synchronized robot/torque viewer. |
+| `static_analysis()` | Opens sliders for the robot selected in `projectConfig.m`; Calculate shows signed gravity holding torque at that pose. |
+
+For an interactive stationary-pose check, run `static_analysis` in MATLAB.
+Move the joint sliders, then press **Calculate**. A changed pose clears the
+previous results so they cannot be mistaken for the new pose. **Home** restores
+the selected robot's home angles. The values are joint-side gravity holding
+torques in N m at zero speed and acceleration, with gravity
+`[0 0 -9.81]` m/s^2 in the base frame. They exclude process force, friction,
+gearbox effects, and collision feasibility; preliminary CAD properties and
+provisional limits remain preliminary here too.
 
 `prepareDynamicsModel`, `validateConfigurations`, and `dynamicsMetadata` are
 shared internal helpers. Validation tests are in `validation/`:
 `validate_dynamics_analysis.m`, `verifyDynamicsConsistency.m`,
 `estimateGravityMomentFromCom.m`, and `test_one_link_dynamics.m`.
 `run_all_validation.m` includes the dynamics suite.
+
+For the current `robot_ver1` preliminary outer-reach test:
+
+```matlab
+extreme_line_dynamics
+```
+
+The case does not perform collision rejection and is not a final actuator-sizing
+result. Its path and motion settings live in
+`robots/robot_ver1/dynamicsTestCases.m`.
 
 ## Input Contract
 
@@ -205,20 +226,16 @@ starting rows. Increasing `numSamples` and `numStarts` improves exploration
 but does not certify a global maximum. No stationary pose alone bounds the
 torque of a moving robot.
 
-For motion loads, use the trajectory cases in `actuator_sizing_cases`:
+For stationary and motion loads, use the consolidated analysis:
 
 ```matlab
-suite = example_actuator_sizing_cases();
-disp(suite.aggregate.caseComparison)
-disp(suite.gravity.summaryTable)
-disp(suite.cases(2).dynamics.summaryTable) % LINE_WELD if status is PASS
-plotDynamicsResults(suite.cases(2).dynamics,struct('joint',2))
+session = actuator_sizing_analysis;
+disp(session.suite.jointSummary)
+disp(session.suite.cases)
 ```
 
-`suite.cases` records PASS, FAIL, DISABLED, or NOT_CONVERGED for each case.
-`suite.aggregate` includes only passing motion cases and preserves paired
-torque-speed samples. To run one motion with edited path or timing, create
-the case catalog, change the desired case, call `generateTrajectory`, then
-pass its time/q/qd/qdd into `analyzeTrajectoryDynamics` (see the
-`actuator_sizing_cases/README.md` example). The example cases do not cover a
-real transfer move or true cycle-level thermal RMS; both require mission data.
+`session.suite.cases` records PASS, FAIL, DISABLED, UNVERIFIED, or
+NOT_CONVERGED. `session.suite.aggregate` includes only passing motions and
+preserves paired torque-speed samples. Geometry and timing live in the
+selected robot's `dynamicsTestCases.m`. A real cycle-level thermal RMS still
+requires mission timing, dwell periods, and repetition data.

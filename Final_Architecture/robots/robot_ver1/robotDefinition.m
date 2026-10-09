@@ -44,11 +44,15 @@ params.displayName = "robot_ver1 (preliminary six-axis CAD model)";
 params.source.type = "URDF";
 params.source.urdf = string(urdfPath);
 params.source.packageFolder = string(packageFolder);
-params.source.massPropertyAccuracy = "Inventor Low";
+params.source.massPropertyAccuracy = "PRELIMINARY_USER_MASSES";
+params.source.massUpdate = ...
+    "User-supplied masses dated 2026-10-02; existing body-frame COMs retained";
+params.source.inertiaAssumption = ...
+    "Each Inventor Low-accuracy COM inertia tensor was scaled by new mass / old mass";
 params.source.joint6Geometry = ...
     "URDF_Files(ver2): Joint_6 transform, axis, and End_Effector mesh";
 params.source.endEffectorDynamics = ...
-    "Inventor screenshots converted from world coordinates and kg*mm^2 to the End_Effector body frame in SI units";
+    "Inventor COM conversion retained; mass changed to 0.300 kg and COM inertia scaled proportionally";
 params.joints.positionLimits = limits;
 params.joints.homePosition = home;
 params.joints.limitStatus = "PROVISIONAL";
@@ -82,7 +86,7 @@ readiness.status = "PRELIMINARY_SIX_AXIS_MODEL";
 readiness.warnings = [
     "All six joint limits are provisional [-pi, pi]."
     "The TCP is temporarily the End_Effector body-frame origin."
-    "Inventor mass properties were exported at Low accuracy."
+    "Masses are user supplied; COMs are retained and Low-accuracy Inventor inertias are scaled proportionally."
     "The Link_3/Wrist_2 home collision is unresolved; MATLAB uses convex mesh collision geometry."
     "Final actuator sizing is not allowed for this model."];
 readiness.joint6Missing = false;
@@ -151,7 +155,8 @@ data.name = string(name);
 data.mass = mass;
 data.centerOfMass = reshape(r,1,3);
 data.inertia = Icom;
-data.massPropertySource = "robot_ver1 URDF corrected from Inventor screenshots";
+data.massPropertySource = ...
+    "robot_ver1 URDF: user mass, retained COM, proportionally scaled preliminary inertia";
 data.dynamics.status = "estimated";
 
 end

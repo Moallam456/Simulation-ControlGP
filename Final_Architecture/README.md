@@ -48,8 +48,12 @@ Generic analyses should accept this `robot` struct explicitly.
 
 ## Robot-Specific Folder
 
-The current default robot is `robot_ver1`. It is the imported, preliminary
-six-axis model used for URDF-backed analysis.
+The current default robot is `robot_ver2`. It is an imported, preliminary
+six-axis model. `robot_ver1` remains available explicitly:
+
+```matlab
+oldRobot = loadRobot("robot_ver1");
+```
 
 ```text
 robots/robot_ver1/
@@ -76,6 +80,13 @@ is blocked. FK, numerical IK, visualization, workspace, trajectory generation,
 collision inspection, and preliminary rigid-body dynamics remain available. The current
 `Link_3`/`Wrist_2` home collision is intentionally reported as unresolved;
 MATLAB treats imported mesh collision geometry as convex.
+
+The active six-axis URDF export is available through
+`loadRobot()` or `loadRobot("robot_ver2")`. Its copied CAD package
+and robot-specific readiness notes are in `robots/robot_ver2/README.md`.
+Its source URDF limits and mass data need review. The copied mesh filenames
+are unique to avoid clashes with `robot_ver1`. Run
+`validate_robot_ver2` before using it for preliminary analysis.
 
 The earlier programmatic `initial_trial` model remains available explicitly:
 
@@ -273,9 +284,9 @@ figures = plotDynamicsResults(results,struct('joint',2));
 ```
 
 For `robot_ver1`, these results are explicitly preliminary and include
-`results.meta.readiness`. Calls to `createActuatorSizingCases` and
-`runActuatorSizingCases` are blocked until final limits, TCP, mass-property
-accuracy, and collision status are resolved.
+`results.meta.readiness`. The consolidated load study can run for design
+exploration, but final motor sizing remains blocked until limits, TCP,
+mass-property accuracy, case data, and collision status are resolved.
 
 `results` contains `meta`, `time`, `state.q/qd/qdd`,
 `torque.total/gravity/inertial/velocity/residual`, `power.joint`,
@@ -288,16 +299,14 @@ stationary candidates and multiple local starts; `options.mode="poses"` only
 evaluates specified stationary poses. The search requires Optimization Toolbox
 and provides no global certificate. `example_dynamics_workflow()` is only
 a J2-motion software smoke test, not an actuator-sizing case. Run
-`example_actuator_sizing_cases()` for preliminary line, arc, full-circle,
-multi-segment, and gravity load cases. See
+`session = actuator_sizing_analysis` for the configured robot's stationary
+and moving load cases and one summary dashboard. See
 [actuator_sizing_cases/README.md](actuator_sizing_cases/README.md) for case
 definitions, limitations, outputs, and validation commands. Use
 `validate_dynamics_analysis(robot)` for numerical dynamics checks and
 `validate_actuator_sizing_cases(robot)` for trajectory and sampling checks.
-For synchronized robot animation and progressively revealed torque graphs,
-use `session = inspectDynamicsCase(robot,"LINE_WELD")` or select another
-enabled case ID. `inspectDynamicsCase(robot,"GRAVITY_HOLD")` displays
-stationary per-joint peak poses. See
+The dashboard's `Animate case` and `Gravity poses` controls open the
+synchronized motion and stationary-pose viewers. See
 [visualization/README.md](visualization/README.md) for commands and controls.
 
 ## Visual Joint Check
@@ -306,7 +315,8 @@ From MATLAB with `Final_Architecture` and `Final_Architecture/visualization`
 on the path:
 
 ```matlab
-robot = loadRobot();
+animate_robot_joints;
+robot = loadRobot("robot_ver1"); % Optional: inspect a non-default robot.
 animate_robot_joints(robot);
 animate_robot_joints(robot,struct('jointIndices',[2 3], ...
     'amplitudeDeg',60,'framesPerSweep',30,'pauseSeconds',0.05));
