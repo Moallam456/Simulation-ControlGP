@@ -61,6 +61,14 @@ actuation = callInFolderIfFileExists( ...
     "actuatorParameters", ...
     structure);
 
+% All consumers address a model frame, including the fixed tool transform.
+toolInModel = getTransform(model,params.joints.homePosition, ...
+    char(structure.frames.endEffector),char(structure.frames.flange));
+if norm(toolInModel-params.tool.TFlangeTCP,'fro')>1e-9
+    error('loadRobot:ToolFrameMismatch', ...
+        'The active model TCP frame and params.tool.TFlangeTCP disagree.');
+end
+
 gravityPoses = callInFolderIfFileExists( ...
     robotFolder,'gravityCandidatePoses.m', ...
     "gravityCandidatePoses",params,structure);
@@ -76,8 +84,10 @@ robot.readiness = readiness;
 robot.actuation = actuation;
 robot.collision = collision;
 robot.gravityPoses = gravityPoses;
+% Bind the robot-specific file once; solving must not mutate the global path.
+ikSolver = withTemporaryPath(robotFolder,@() str2func('solveInverseKinematics'));
 robot.solveIK = @(targetPose,varargin) solveIK( ...
-    robotFolder,targetPose,robot,varargin{:});
+    ikSolver,targetPose,robot,varargin{:});
 robot.dynamicsCases = callInFolderIfFileExists( ...
     robotFolder,'dynamicsTestCases.m', ...
     "dynamicsTestCases",robot);
@@ -149,7 +159,7 @@ output = functionHandle(varargin{:});
 
 end
 
-function solutions = solveIK(robotFolder,targetPose,robot,varargin)
+function solutions = solveIK(ikSolver,targetPose,robot,varargin)
 
 if isempty(varargin)
     options = struct();
@@ -160,9 +170,6 @@ else
         'IK accepts at most one options structure.');
 end
 
-solutions = callInRobotFolder( ...
-    robotFolder, ...
-    "solveInverseKinematics", ...
-    targetPose,robot,options);
+solutions = ikSolver(targetPose,robot,options);
 
 end

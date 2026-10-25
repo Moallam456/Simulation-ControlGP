@@ -91,7 +91,7 @@ results.success = results.structure.success && results.parameters.success && ...
     results.fkVsRigidBodyTree.success && results.ik.success;
 fprintf('Imported-tree structure valid: %d\n',results.structure.success);
 fprintf('Imported-tree mass properties valid: %d\n',results.massProperties.success);
-fprintf('Numerical IK round trip valid: %d\n',results.ik.success);
+fprintf('IK round trip valid: %d\n',results.ik.success);
 end
 
 function result = validateStructure(robot)

@@ -32,6 +32,9 @@ settings.cacheFolder = fullfile(rootDir,'analysis_cache','data');
 settings.manipulabilityIndex = "inverse-condition";
 settings.manipulabilityMotion = "linear";
 settings.manipulabilityThreshold = NaN;
+settings.histogramBinWidthDeg = 10;
+settings.envelopeAlphaRadius_m = NaN;
+settings.envelopeOpacity = 0.22;
 
 settings = applyOverrides(settings,overrides);
 
@@ -45,6 +48,12 @@ end
 
 settings = normalizeSettings(settings,analysisType);
 validateRobotInterface(robot);
+if isfield(robot.params.tool,'status') && robot.params.tool.status=="UNCONFIGURED"
+    warning('workspace:UnconfiguredTCP', ...
+        ['The tcp frame still has an identity placeholder offset. ', ...
+         'These points are NOT a validated torch-tip workspace. ', ...
+         'Set the measured tcp_fixed origin in the robot URDF and reload.']);
+end
 
 fprintf('\nWorkspace analysis: %s\n',strrep(analysisType,'_',' '));
 fprintf('Robot: %s\n',robot.id);
@@ -102,11 +111,10 @@ else
 end
 
 metrics = computeMetrics(points(accepted,:),settings);
-figures = plotWorkspace(robot,analysisType,points,accepted,metrics, ...
-    settings,collision,manipulability);
-
 voxelCoordinates = floor(points/settings.voxelSize);
 [~,~,sampleVoxelIndex] = unique(voxelCoordinates,'rows');
+figures = plotWorkspace(robot,analysisType,points,accepted,metrics, ...
+    settings,collision,manipulability,dataset,voxelCoordinates);
 
 workspace.robotID = string(robot.id);
 workspace.analysisType = analysisType;
@@ -141,6 +149,8 @@ workspace.voxels = metrics.voxels;
 workspace.figures = figures;
 workspace.summary = createSummary(workspace);
 workspace.readiness = readinessMetadata(robot);
+workspace.tool = robot.params.tool;
+workspace.pointFrame = string(robot.structure.frames.endEffector);
 
 fprintf('%s\n',workspace.summary);
 if requiresCollision
@@ -183,6 +193,19 @@ end
 function settings = normalizeSettings(settings,analysisType)
 validatePositiveInteger(settings.numSamples,'numSamples');
 validatePositiveInteger(settings.densityBins,'densityBins');
+if ~isscalar(settings.envelopeAlphaRadius_m) || ...
+        ~(isnan(settings.envelopeAlphaRadius_m) || ...
+        (isfinite(settings.envelopeAlphaRadius_m) && settings.envelopeAlphaRadius_m>0))
+    error('workspace:InvalidSetting','envelopeAlphaRadius_m must be NaN or positive metres.');
+end
+if ~isscalar(settings.envelopeOpacity) || ~isfinite(settings.envelopeOpacity) || ...
+        settings.envelopeOpacity<0 || settings.envelopeOpacity>1
+    error('workspace:InvalidSetting','envelopeOpacity must be between zero and one.');
+end
+if ~isscalar(settings.histogramBinWidthDeg) || ...
+        ~isfinite(settings.histogramBinWidthDeg) || settings.histogramBinWidthDeg <= 0
+    error('workspace:InvalidSetting','histogramBinWidthDeg must be positive degrees.');
+end
 if ~isscalar(settings.seed) || ~isfinite(settings.seed) || ...
         settings.seed < 0 || settings.seed ~= floor(settings.seed)
     error('workspace:InvalidSetting','seed must be a nonnegative integer.');
@@ -393,12 +416,16 @@ density.numBins = numBins;
 end
 
 function figures = plotWorkspace( ...
-        robot,analysisType,allPoints,accepted,metrics,settings,collision,manipulability)
+        robot,analysisType,allPoints,accepted,metrics,settings,collision, ...
+        manipulability,dataset,voxelCoordinates)
 figures.main = [];
 figures.pointCloud = [];
 figures.robotAxes = [];
 figures.jointSliders = gobjects(0,1);
 figures.homeButton = [];
+figures.inspector = struct();
+figures.jointHistogramsButton = [];
+figures.envelope = struct();
 figures.savedFiles = strings(0,1);
 if ~settings.showPlot && ~settings.saveFigure
     return;
@@ -409,19 +436,24 @@ end
 visibility = matlab.lang.OnOffSwitchState(settings.showPlot);
 figures.main = figure('Name',char(plotTitle(robot,analysisType)), ...
     'Color','w','Visible',visibility,'NumberTitle','off', ...
-    'Position',[80 70 1280 720]);
+    'Position',[80 70 1550 850]);
 figures.pointCloud = figures.main;
-workspaceAxes = axes(figures.main,'Position',[0.07 0.11 0.65 0.81]);
+workspaceAxes = axes(figures.main,'Position',[0.06 0.11 0.55 0.81]);
+plotItems = struct('handle',{},'kind',{},'indices',{},'voxelCoordinates',{});
 if ismember(analysisType,["manipulability","usable"])
     centers = manipulability.voxels.centers;
     values = manipulability.voxels.max;
+    displayedVoxels = manipulability.voxels.indices;
     if analysisType == "usable"
         keep = values >= manipulability.threshold;
         centers = centers(keep,:);
         values = values(keep);
+        displayedVoxels = displayedVoxels(keep,:);
     end
-    scatter3(workspaceAxes,centers(:,1),centers(:,2),centers(:,3), ...
+    marker = scatter3(workspaceAxes,centers(:,1),centers(:,2),centers(:,3), ...
         12,values,'filled');
+    plotItems(1) = struct('handle',marker,'kind',"voxel", ...
+        'indices',zeros(0,1),'voxelCoordinates',displayedVoxels);
     colorbarHandle = colorbar(workspaceAxes);
     colorbarHandle.Label.String = 'Linear inverse condition number';
     clim([0 1]);
@@ -429,19 +461,25 @@ if ismember(analysisType,["manipulability","usable"])
 else
     if analysisType == "collision_free"
         colliding = ~collision.isCollisionFree;
-        scatter3(workspaceAxes,allPoints(colliding,1),allPoints(colliding,2), ...
+        marker = scatter3(workspaceAxes,allPoints(colliding,1),allPoints(colliding,2), ...
             allPoints(colliding,3),5,[0.78 0.82 0.86], ...
             'filled','MarkerFaceAlpha',0.12);
+        plotItems(end+1) = struct('handle',marker,'kind',"sample", ...
+            'indices',find(colliding),'voxelCoordinates',zeros(0,3));
         hold(workspaceAxes,'on');
-        scatter3(workspaceAxes,allPoints(accepted,1),allPoints(accepted,2), ...
+        marker = scatter3(workspaceAxes,allPoints(accepted,1),allPoints(accepted,2), ...
             allPoints(accepted,3),5,[0.00 0.35 0.68], ...
             'filled','MarkerFaceAlpha',0.45);
+        plotItems(end+1) = struct('handle',marker,'kind',"sample", ...
+            'indices',find(accepted),'voxelCoordinates',zeros(0,3));
         legend(workspaceAxes, ...
             {'Colliding configuration','Collision-free configuration'}, ...
             'Location','southeast');
     else
-        scatter3(workspaceAxes,allPoints(accepted,1),allPoints(accepted,2), ...
+        marker = scatter3(workspaceAxes,allPoints(accepted,1),allPoints(accepted,2), ...
             allPoints(accepted,3),5,'filled','MarkerFaceAlpha',0.35);
+        plotItems(1) = struct('handle',marker,'kind',"sample", ...
+            'indices',find(accepted),'voxelCoordinates',zeros(0,3));
     end
 end
 grid(workspaceAxes,'on');
@@ -471,8 +509,29 @@ else
         size(allPoints,1),1000*metrics.voxels.size,metrics.volume.estimate));
 end
 view(workspaceAxes,135,25);
-[figures.robotAxes,figures.jointSliders,figures.homeButton] = ...
+[figures.robotAxes,figures.jointSliders,figures.homeButton,setRobotPose] = ...
     addWorkspaceRobotControls(robot,figures.main,workspaceAxes);
+inspectorData.analysisType = analysisType;
+inspectorData.settings = settings;
+inspectorData.q = dataset.q;
+inspectorData.transforms = dataset.transforms;
+inspectorData.points = allPoints;
+inspectorData.voxelCoordinates = voxelCoordinates;
+inspectorData.accepted = accepted;
+inspectorData.collision = collision;
+inspectorData.manipulability = manipulability;
+figures.inspector = workspacePointInspector( ...
+    robot,figures.main,workspaceAxes,plotItems,inspectorData,setRobotPose);
+if analysisType == "usable"
+    figures.envelope = addWorkspaceEnvelope(figures.main,workspaceAxes,marker, ...
+        colorbarHandle,allPoints(accepted,:),settings);
+    figures.jointHistogramsButton = uicontrol(figures.main, ...
+        'Style','pushbutton','Units','normalized', ...
+        'Position',[0.65 0.935 0.15 0.045],'String','joint_histograms', ...
+        'TooltipString','Joint-angle counts from this usable-workspace dataset', ...
+        'Callback',@(~,~) showJointHistograms(robot,figures.main, ...
+            dataset.q,accepted,voxelCoordinates,manipulability.values,settings));
+end
 if settings.saveFigure
     fileName = sprintf('%s_%s.png',robot.id,analysisType);
     filePath = fullfile(settings.outputFolder,fileName);
@@ -481,7 +540,161 @@ if settings.saveFigure
 end
 end
 
-function [robotAxes,sliders,homeButton] = ...
+function controls = addWorkspaceEnvelope(fig,ax,marker,colorbarHandle,points,settings)
+% Surface reconstruction is presentation only, never a reachability test.
+previousNextPlot = ax.NextPlot;
+pointSubtitle = ax.Subtitle.String;
+ax.NextPlot = 'add';
+surface = patch(ax,'Faces',zeros(0,3),'Vertices',zeros(0,3), ...
+    'FaceColor',[0.08 0.52 0.62],'FaceAlpha',settings.envelopeOpacity, ...
+    'EdgeColor','none','FaceLighting','gouraud','AmbientStrength',0.6, ...
+    'SpecularStrength',0.15,'Visible','off','HitTest','off', ...
+    'PickableParts','none','Tag','UsableWorkspaceEnvelope');
+lamp = camlight(ax,'headlight');
+ax.NextPlot = previousNextPlot;
+selector = uicontrol(fig,'Style','popupmenu','Units','normalized', ...
+    'Position',[0.06 0.018 0.23 0.04], ...
+    'String',{'Points','Envelope','Envelope + points'}, ...
+    'TooltipString','Visual reconstruction only; enclosed positions are not certified usable.', ...
+    'Callback',@changeView);
+statusText = uicontrol(fig,'Style','text','Units','normalized', ...
+    'Position',[0.30 0.018 0.31 0.04],'BackgroundColor','w', ...
+    'HorizontalAlignment','left','String','');
+built = false;
+status = "NOT_BUILT";
+radius = NaN;
+regions = 0;
+controls.selector = selector;
+controls.surface = surface;
+controls.getState = @getState;
+
+    function changeView(~,~)
+        if selector.Value>1 && ~built
+            p = unique(points,'rows');
+            built = true;
+            if size(p,1)<4 || rank(p-mean(p,1))<3
+                status = "INSUFFICIENT_3D_SAMPLES";
+            else
+                try
+                    if isnan(settings.envelopeAlphaRadius_m)
+                        shape = alphaShape(p,'HoleThreshold',0,'RegionThreshold',0);
+                    else
+                        shape = alphaShape(p,settings.envelopeAlphaRadius_m, ...
+                            'HoleThreshold',0,'RegionThreshold',0);
+                    end
+                    radius = shape.Alpha;
+                    regions = numRegions(shape);
+                    [faces,vertices] = boundaryFacets(shape);
+                    surface.Vertices = vertices;
+                    surface.Faces = faces;
+                    status = "READY";
+                    if isempty(faces), status="NO_SURFACE_AT_RADIUS"; end
+                catch ME
+                    status = "RECONSTRUCTION_FAILED";
+                    warning('workspace:EnvelopeFailed','Envelope reconstruction failed: %s',ME.message);
+                end
+            end
+        end
+        if selector.Value>1 && status~="READY"
+            selector.Value=1;
+            statusText.String='No 3-D envelope; points retained.';
+        elseif selector.Value>1
+            statusText.String=sprintf('Visual approximation | alpha %.0f mm',1000*radius);
+        else
+            statusText.String='';
+        end
+        surface.Visible = matlab.lang.OnOffSwitchState(selector.Value>1);
+        marker.Visible = matlab.lang.OnOffSwitchState(selector.Value~=2);
+        colorbarHandle.Visible = marker.Visible;
+        ax.Subtitle.String = pointSubtitle;
+        if selector.Value>1
+            ax.Subtitle.String=sprintf( ...
+                '%d accepted samples | approximate visual envelope',size(points,1));
+        end
+        camlight(lamp,'headlight');
+        drawnow limitrate;
+    end
+
+    function state = getState()
+        state.status=status;
+        state.alphaRadius_m=radius;
+        state.numRegions=regions;
+        state.inputSampleCount=size(points,1);
+        state.faceCount=size(surface.Faces,1);
+        state.visualApproximationOnly=true;
+    end
+end
+
+function showJointHistograms(robot,parent,q,accepted,voxels,indexValues,settings)
+% Use a snapshot of accepted samples, never inspector-generated IK candidates.
+existing = getappdata(parent,'WorkspaceJointHistograms');
+if ~isempty(existing) && isgraphics(existing,'figure')
+    figure(existing);
+    return;
+end
+sampleIndices = find(accepted);
+bestIndices = zeros(0,1);
+if ~isempty(sampleIndices)
+    % Highest index per voxel; ties select the earliest sampled configuration.
+    ranked = sortrows([-indexValues(sampleIndices),sampleIndices],[1 2]);
+    [~,first] = unique(voxels(ranked(:,2),:),'rows','stable');
+    bestIndices = sort(ranked(first,2));
+end
+fig = figure('Name',char(robot.id+" | usable workspace joint histograms"), ...
+    'NumberTitle','off','Color','w','Position',[120 90 1100 800], ...
+    'Tag','WorkspaceJointHistograms');
+setappdata(parent,'WorkspaceJointHistograms',fig);
+mode = uicontrol(fig,'Style','popupmenu','Units','normalized', ...
+    'Position',[0.05 0.94 0.52 0.04], ...
+    'String',{'All accepted sampled configurations','Best index per plotted voxel'}, ...
+    'Tag','HistogramPopulation','Callback',@redraw);
+countText = uicontrol(fig,'Style','text','Units','normalized', ...
+    'Position',[0.59 0.94 0.36 0.04],'BackgroundColor','w', ...
+    'HorizontalAlignment','right');
+plots = uipanel(fig,'Units','normalized','Position',[0 0.08 1 0.84], ...
+    'BorderType','none','BackgroundColor','w');
+layout = tiledlayout(plots,ceil(robot.structure.dof/2),2, ...
+    'Padding','compact','TileSpacing','compact');
+uicontrol(fig,'Style','text','Units','normalized', ...
+    'Position',[0.05 0.015 0.90 0.045],'BackgroundColor','w', ...
+    'String',sprintf('Usable samples only | linear inverse condition >= %.3f | sampled coverage, not task usage', ...
+        settings.manipulabilityThreshold));
+angles = rad2deg(q);
+limits = rad2deg(robot.params.joints.positionLimits);
+bars = gobjects(robot.structure.dof,1);
+for j = 1:robot.structure.dof
+    ax = nexttile(layout);
+    edges = limits(j,1):settings.histogramBinWidthDeg:limits(j,2);
+    if edges(end)<limits(j,2), edges(end+1)=limits(j,2); end
+    if numel(edges)<2, edges=[limits(j,1)-0.5 limits(j,2)+0.5]; end
+    bars(j) = histogram(ax,angles(sampleIndices,j),'BinEdges',edges, ...
+        'FaceColor',[0.00 0.35 0.68],'EdgeColor','w');
+    title(ax,char(robot.structure.jointNames(j)),'Interpreter','none');
+    xlabel(ax,'Joint angle (deg)'); ylabel(ax,'Configuration count');
+    xlim(ax,edges([1 end])); grid(ax,'on');
+end
+redraw();
+
+    function redraw(~,~)
+        selected = sampleIndices;
+        if mode.Value==2, selected=bestIndices; end
+        for joint=1:numel(bars)
+            bars(joint).Data=angles(selected,joint);
+        end
+        peak = max([1;arrayfun(@(h) max([0 h.Values]),bars)]);
+        for joint=1:numel(bars)
+            ylim(bars(joint).Parent,[0 1.1*peak]);
+        end
+        countText.String=sprintf('%d configurations | %d plotted voxels', ...
+            numel(selected),numel(bestIndices));
+        if isempty(selected)
+            countText.String='No configurations pass the usable filters';
+        end
+        setappdata(fig,'HistogramSampleIndices',selected);
+    end
+end
+
+function [robotAxes,sliders,homeButton,setPose] = ...
         addWorkspaceRobotControls(robot,figureHandle,workspaceAxes)
 
 qHome = robot.params.joints.homePosition;
@@ -491,6 +704,8 @@ dof = robot.structure.dof;
 
 robotAxes = axes(figureHandle,'Position',workspaceAxes.Position, ...
     'Color','none','HandleVisibility','off');
+robotAxes.PickableParts = 'none';
+robotAxes.HitTest = 'off';
 drawRobot(false);
 
 workspaceLimits = [workspaceAxes.XLim;workspaceAxes.YLim;workspaceAxes.ZLim];
@@ -520,7 +735,7 @@ cameraLink = linkprop([workspaceAxes robotAxes],{ ...
 setappdata(figureHandle,'WorkspaceAxesLink',cameraLink);
 
 panel = uipanel(figureHandle,'Title','Robot joint control', ...
-    'Units','normalized','Position',[0.77 0.08 0.21 0.84], ...
+    'Units','normalized','Position',[0.65 0.58 0.33 0.34], ...
     'BackgroundColor','w');
 tcpText = uicontrol(panel,'Style','text','Units','normalized', ...
     'Position',[0.06 0.89 0.88 0.07],'BackgroundColor','w', ...
@@ -531,7 +746,7 @@ valueLabels = gobjects(dof,1);
 sliderListeners = cell(dof,1);
 isResetting = false;
 top = 0.84;
-rowHeight = min(0.115,0.67/max(1,dof));
+rowHeight = 0.72/max(1,dof);
 for jointIndex = 1:dof
     y = top-(jointIndex-1)*rowHeight;
     uicontrol(panel,'Style','text','Units','normalized', ...
@@ -562,6 +777,7 @@ framesToggle = uicontrol(panel,'Style','checkbox','Units','normalized', ...
     'Value',0,'BackgroundColor','w','Callback',@toggleFrames);
 setappdata(figureHandle,'WorkspaceRobotConfiguration',qCurrent);
 setappdata(figureHandle,'WorkspaceRobotSliderListeners',sliderListeners);
+setPose = @setConfiguration;
 updateReadouts();
 
     function moveJoint(jointIndex,value)
@@ -572,10 +788,22 @@ updateReadouts();
         setappdata(figureHandle,'WorkspaceRobotConfiguration',qCurrent);
         drawRobot(true);
         updateReadouts();
+        notifyPoseChanged();
     end
 
     function resetHome(~,~)
-        qCurrent = qHome;
+        setConfiguration(qHome);
+    end
+
+    function setConfiguration(configuration)
+        configuration = reshape(configuration,1,[]);
+        if numel(configuration) ~= dof || any(~isfinite(configuration)) || ...
+                any(configuration < limits(:,1).'-1e-10 | ...
+                    configuration > limits(:,2).'+1e-10)
+            error('workspace:InvalidInspectorPose', ...
+                'Reach requires a finite, limit-valid joint configuration.');
+        end
+        qCurrent = configuration;
         isResetting = true;
         for index = 1:dof
             sliders(index).Value = qCurrent(index);
@@ -584,6 +812,7 @@ updateReadouts();
         setappdata(figureHandle,'WorkspaceRobotConfiguration',qCurrent);
         drawRobot(true);
         updateReadouts();
+        notifyPoseChanged();
     end
 
     function toggleFrames(~,~)
@@ -601,6 +830,10 @@ updateReadouts();
             'Visuals','on','Collisions','off','Frames',frames, ...
             'PreservePlot',false,'FastUpdate',fastUpdate);
         robotAxes.Color = 'none';
+        robotAxes.PickableParts = 'none';
+        robotAxes.HitTest = 'off';
+        set(findall(robotAxes,'Type','Patch'),'HitTest','off', ...
+            'PickableParts','none');
         robotAxes.XColor = 'none';
         robotAxes.YColor = 'none';
         robotAxes.ZColor = 'none';
@@ -630,6 +863,13 @@ updateReadouts();
             T(1,4),T(2,4),T(3,4));
     end
 
+    function notifyPoseChanged()
+        if isappdata(figureHandle,'WorkspacePoseChanged')
+            callback = getappdata(figureHandle,'WorkspacePoseChanged');
+            callback();
+        end
+    end
+
 end
 
 function value = plotTitle(robot,analysisType)
@@ -641,6 +881,9 @@ elseif analysisType == "manipulability"
     value = "Manipulability Workspace - " + string(robot.id);
 else
     value = "Usable Workspace - " + string(robot.id);
+end
+if isfield(robot.params.tool,'status') && robot.params.tool.status=="UNCONFIGURED"
+    value = value + " | TCP UNCONFIGURED";
 end
 end
 

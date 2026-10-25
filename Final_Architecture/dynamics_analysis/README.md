@@ -16,6 +16,14 @@ It does not size a motor or gearbox and does not assume external process forces.
 | `example_dynamics_workflow()` | Runnable example; Control can replace its generated trajectory with real motion arrays. |
 | `extreme_line_dynamics()` | Loads the robot selected in `projectConfig.m`, runs its robot-specific 300 mm outer-reach line, and opens the synchronized robot/torque viewer. |
 | `static_analysis()` | Opens sliders for the robot selected in `projectConfig.m`; Calculate shows signed gravity holding torque at that pose. |
+| `park_position_analysis()` | No-argument compact park-pose search, torque comparison, and sampled return-route preview. |
+| `optimizeParkConfiguration(robot,settings)` | Shared minimax holding-load engine; robot-specific seeds/envelope defaults come from `params.park`. |
+
+Park search uses joint-output continuous ratings only when explicitly supplied.
+Until then it ranks peak torque in N m and leaves motor utilization unavailable.
+`findParkPosition` delegates to the same engine for compatibility. Curvature
+is diagnostic, not a mandatory passive-stability constraint. Park candidates
+and sampled paths do not certify brake safety, cable routing, or workcell clearance.
 
 For an interactive stationary-pose check, run `static_analysis` in MATLAB.
 Move the joint sliders, then press **Calculate**. A changed pose clears the

@@ -7,7 +7,7 @@ function [T_B_TCP, frames] = forward_kinematics(robot,q)
 %   q     : 1-by-n row vector [rad]
 %
 % OUTPUTS:
-%   T_B_TCP : base-to-end-effector transform
+%   T_B_TCP : base-to-active-TCP transform
 %   frames  : base, body, and end-effector transforms
 
 validateRobot(robot);
@@ -100,6 +100,8 @@ for i = 1:robot.structure.dof
         char(robot.structure.bodyNames(i)));
 end
 
+% endEffector names the actual fixed TCP body, not the last moving joint.
+% Its transform already includes the tool offset; do not multiply it twice.
 T_B_TCP = getTransform( ...
     robot.model, ...
     q, ...

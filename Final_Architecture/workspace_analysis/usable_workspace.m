@@ -7,7 +7,10 @@ function varargout = usable_workspace()
 % Self-colliding configurations are removed before applying the threshold.
 
 % Usable-workspace setting. Change this value to keep more or fewer points.
-manipulabilityThreshold = 0.40;
+manipulabilityThreshold = 0.20;
+histogramBinWidthDeg = 10; % Joint-angle histogram bin width [deg].
+envelopeAlphaRadius_m = NaN; % NaN: minimum all-points radius; larger can erase cavities.
+envelopeOpacity = 0.22;     % 0: transparent; 1: opaque. Visual envelope only.
 
 rootDir = fileparts(fileparts(mfilename('fullpath')));
 addpath(rootDir,fullfile(rootDir,'kinematics'), ...
@@ -19,6 +22,9 @@ config = projectConfig();
 robot = loadRobot(config.robotID);
 assertConfiguredRobot(robot,config.robotID);
 settings.manipulabilityThreshold = manipulabilityThreshold;
+settings.histogramBinWidthDeg = histogramBinWidthDeg;
+settings.envelopeAlphaRadius_m = envelopeAlphaRadius_m;
+settings.envelopeOpacity = envelopeOpacity;
 result = workspaceAnalysis(robot,"usable",settings);
 
 if nargout > 0

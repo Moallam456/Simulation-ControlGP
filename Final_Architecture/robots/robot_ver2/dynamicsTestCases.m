@@ -11,7 +11,8 @@ spatialStep = 0.04;       % m between Cartesian IK knots
 if robot.structure.dof ~= 6
     error('robot_ver2:DynamicsCaseDOF','The ver2 test cases require six joints.');
 end
-qStart = deg2rad([0 60 105 135 0 0]);
+% Retuned for the measured torch-tip TCP, not the old Joint-6 origin.
+qStart = deg2rad([0 60 120 120 0 0]);
 limits = robot.params.joints.positionLimits;
 if any(qStart < limits(:,1).' | qStart > limits(:,2).')
     error('robot_ver2:InvalidDynamicsStart', ...
@@ -20,7 +21,7 @@ end
 T = forward_kinematics(robot,qStart);
 p = T(1:3,4).';
 qWrist = qStart;
-qWrist(4) = qWrist(4)+deg2rad(8);
+qWrist(4) = qWrist(4)+deg2rad(4);
 TWrist = forward_kinematics(robot,qWrist);
 R0 = T(1:3,1:3);
 R1 = TWrist(1:3,1:3);
@@ -58,8 +59,8 @@ cases(2).path = struct('type',"multiLine",'waypoints',[ ...
     'orientations',cat(3,R0,R1,R1,R0));
 cases(2).source = "Robot-specific outer-reach, downward-torch start pose";
 cases(2).notes = [ ...
-    "J3 starts 15 degrees lower than the first downward-pose trial." ...
-    "The torch starts downward; J4 deliberately tilts it 8 degrees and back." ...
+    "The start pose is retuned for the measured torch-tip TCP." ...
+    "The torch starts downward; J4 deliberately tilts it 4 degrees and back." ...
     "Each path leg stops smoothly at its junction." ...
     "Collision interpolation, physical mesh accuracy, and motor suitability remain unverified."];
 

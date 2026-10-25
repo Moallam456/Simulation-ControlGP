@@ -93,6 +93,9 @@ manipulability = workspaceAnalysis(robot,"manipulability",options);
 
 changedPresentation = options;
 changedPresentation.voxelSize = options.voxelSize/2;
+changedPresentation.histogramBinWidthDeg = 15;
+changedPresentation.envelopeOpacity = 0.35;
+changedPresentation.envelopeAlphaRadius_m = 0.12;
 changedPresentation.manipulabilityThreshold = min( ...
     1,options.manipulabilityThreshold+0.1);
 usable = workspaceAnalysis(robot,"usable",changedPresentation);
@@ -128,11 +131,27 @@ result.collisionChangeReusesCoreOnly = changedCollision.cache.coreHit && ...
     ~changedCollision.cache.collisionHit;
 result.robotChangeInvalidates = invalidated.cache.coreBuilt && ...
     ~invalidated.cache.coreHit;
+result.meshContentInvalidatesCollision = true;
+if isfield(robot.collision,'meshFiles') && ~isempty(robot.collision.meshFiles)
+    meshCopy = fullfile(cacheFolder,'collision_signature_probe.stl');
+    copyfile(char(robot.collision.meshFiles(1)),meshCopy);
+    meshRobot = robot;
+    meshRobot.collision.meshFiles(1) = string(meshCopy);
+    workspaceAnalysis(meshRobot,"collision_free",options);
+    fid = fopen(meshCopy,'ab');
+    assert(fid >= 0,'Could not open temporary mesh signature probe.');
+    fwrite(fid,uint8(17),'uint8');
+    fclose(fid);
+    changedMesh = workspaceAnalysis(meshRobot,"collision_free",options);
+    result.meshContentInvalidatesCollision = changedMesh.cache.coreHit && ...
+        changedMesh.cache.collisionBuilt && ~changedMesh.cache.collisionHit;
+end
 result.success = result.firstRunBuildsCore && ...
     result.manipulabilityReusesCore && ...
     result.presentationChangesReuseAll && ...
     result.collisionChangeReusesCoreOnly && ...
-    result.robotChangeInvalidates;
+    result.robotChangeInvalidates && ...
+    result.meshContentInvalidatesCollision;
 
 fprintf('Workspace staged cache and invalidation valid: %d\n',result.success);
 end
@@ -372,6 +391,9 @@ try
     analysisTypes = ["reachable","collision_free","manipulability","usable"];
     valid = false(size(analysisTypes));
     interactiveValid = false(size(analysisTypes));
+    inspectionValid = false(size(analysisTypes));
+    histogramValid = true;
+    envelopeValid = true;
     for i = 1:numel(analysisTypes)
         workspace = workspaceAnalysis(robot,analysisTypes(i),options);
         valid(i) = isfield(workspace.figures,'main') && ...
@@ -393,12 +415,114 @@ try
             numel(workspace.figures.jointSliders) == robot.structure.dof && ...
             abs(movedConfiguration(1)-target) < 1e-12 && ...
             norm(homeConfiguration-robot.params.joints.homePosition) < 1e-12;
+        inspector = workspace.figures.inspector;
+        if analysisTypes(i) == "reachable"
+            inspector.selectPlotItem(1,1);
+            expectedSample = 1;
+            mapped = inspector.getState().clickedSampleIndex == expectedSample;
+        elseif analysisTypes(i) == "collision_free"
+            mapped = true;
+            if any(~workspace.masks.collisionFree)
+                inspector.selectPlotItem(1,1);
+                mapped = mapped && inspector.getState().clickedSampleIndex == ...
+                    find(~workspace.masks.collisionFree,1);
+                inspector.selectCandidate(find(arrayfun(@(c) ...
+                    c.sampleIndex == find(~workspace.masks.collisionFree,1), ...
+                    inspector.getState().candidates),1));
+                inspector.reach();
+                mapped = mapped && contains( ...
+                    inspector.getState().message,"Colliding pose shown");
+            end
+            if any(workspace.masks.collisionFree)
+                inspector.selectPlotItem(2,1);
+                mapped = mapped && inspector.getState().clickedSampleIndex == ...
+                    find(workspace.masks.collisionFree,1);
+            end
+        else
+            voxelIndices = workspace.manipulability.voxels.indices;
+            if analysisTypes(i) == "usable"
+                keep = workspace.manipulability.voxels.max >= ...
+                    options.manipulabilityThreshold;
+                voxelIndices = voxelIndices(keep,:);
+            end
+            if isempty(voxelIndices)
+                mapped = true;
+                inspector.selectSample(1);
+            else
+                inspector.selectPlotItem(1,1);
+                mapped = isequal(inspector.getState().selectedVoxel, ...
+                    voxelIndices(1,:));
+            end
+        end
+        state = inspector.getState();
+        grouped = all(arrayfun(@(c) c.source ~= "sampled" || ...
+            isequal(workspace.samples.voxelCoordinates(c.sampleIndex,:), ...
+                state.selectedVoxel),state.candidates));
+        eligible = arrayfun(@(c) c.collisionFree == 1 && ...
+            (analysisTypes(i) ~= "usable" || ...
+                c.icn >= options.manipulabilityThreshold),state.candidates);
+        ranked = ~any(eligible) || ...
+            abs(state.candidates(state.selectedIndex).icn - ...
+                max([state.candidates(eligible).icn])) < 1e-12;
+        inspector.reach();
+        state = inspector.getState();
+        reached = max(abs(state.robotConfiguration- ...
+            state.candidates(state.selectedIndex).q)) < 1e-12;
+        inspectionValid(i) = mapped && grouped && ranked && reached;
+        if analysisTypes(i)=="usable"
+            histogramValid = histogramValid && validateJointHistograms(workspace,robot);
+            envelopeValid = envelopeValid && validateEnvelope(workspace);
+        else
+            histogramValid = histogramValid && isempty(workspace.figures.jointHistogramsButton);
+            envelopeValid = envelopeValid && isempty(fieldnames(workspace.figures.envelope));
+        end
         close(workspace.figures.main);
     end
+    multiOptions = options;
+    multiOptions.voxelSize = 5;
+    workspace = workspaceAnalysis(robot,"reachable",multiOptions);
+    [voxels,~,groups] = unique(workspace.samples.voxelCoordinates,'rows');
+    [largestCount,group] = max(accumarray(groups,1));
+    workspace.figures.inspector.selectVoxel(voxels(group,:));
+    multiState = workspace.figures.inspector.getState();
+    multiVoxelValid = largestCount > 1 && ...
+        numel(multiState.candidates) == largestCount;
+    originalCount = numel(multiState.candidates);
+    originalPoints = workspace.samples.points;
+    workspace.figures.inspector.findAlternatives();
+    ikState = workspace.figures.inspector.getState();
+    target = multiState.candidates(multiState.selectedIndex).transform;
+    ikValid = numel(ikState.candidates) >= originalCount && ...
+        isequal(workspace.samples.points,originalPoints);
+    for candidate = ikState.candidates
+        if candidate.source == "new IK"
+            ikValid = ikValid && ...
+                norm(candidate.transform(1:3,4)-target(1:3,4)) <= 1e-5 && ...
+                norm(candidate.transform(1:3,1:3)-target(1:3,1:3),'fro') < 1e-3;
+        end
+    end
+    close(workspace.figures.main);
+    multiOptions.manipulabilityThreshold = 0;
+    workspace = workspaceAnalysis(robot,"usable",multiOptions);
+    histogramValid = histogramValid && validateJointHistograms(workspace,robot);
+    envelopeValid = envelopeValid && validateEnvelope(workspace);
+    close(workspace.figures.main);
+    multiOptions.manipulabilityThreshold = 1;
+    workspace = workspaceAnalysis(robot,"usable",multiOptions);
+    histogramValid = histogramValid && isempty(workspace.accepted.q) && ...
+        validateJointHistograms(workspace,robot);
+    envelopeValid = envelopeValid && validateEnvelope(workspace);
+    close(workspace.figures.main);
     result.analysisTypes = analysisTypes;
     result.valid = valid;
     result.interactiveValid = interactiveValid;
-    result.success = all(valid) && all(interactiveValid);
+    result.inspectionValid = inspectionValid;
+    result.multiVoxelValid = multiVoxelValid;
+    result.ikValid = ikValid;
+    result.histogramValid = histogramValid;
+    result.envelopeValid = envelopeValid;
+    result.success = all(valid) && all(interactiveValid) && ...
+        all(inspectionValid) && multiVoxelValid && ikValid && histogramValid && envelopeValid;
     result.message = "All workspace plot paths executed.";
 catch ME
     close all;
@@ -408,4 +532,80 @@ end
 
 fprintf('Workspace plot smoke valid: %d\n',result.success);
 
+end
+
+function pass = validateEnvelope(workspace)
+controls = workspace.figures.envelope;
+before = controls.getState();
+controls.selector.Value = 2;
+controls.selector.Callback(controls.selector,[]);
+state = controls.getState();
+surface = controls.surface;
+markers = findobj(surface.Parent,'Type','scatter');
+p = unique(workspace.accepted.points,'rows');
+pass = before.status=="NOT_BUILT" && state.visualApproximationOnly && ...
+    state.inputSampleCount==size(workspace.accepted.q,1) && ...
+    strcmp(surface.PickableParts,'none') && strcmp(surface.HitTest,'off');
+if size(p,1)>=4 && rank(p-mean(p,1))==3
+    reference = alphaShape(p,'HoleThreshold',0,'RegionThreshold',0);
+    pass = pass && state.status=="READY" && state.faceCount>0 && ...
+        abs(state.alphaRadius_m-reference.Alpha)<1e-12 && ...
+        isfinite(state.alphaRadius_m) && strcmp(surface.Visible,'on') && ...
+        all(ismember(surface.Vertices,p,'rows')) && ...
+        all(arrayfun(@(h) strcmp(h.Visible,'off'),markers));
+    controls.selector.Value=3;
+    controls.selector.Callback(controls.selector,[]);
+    pass = pass && strcmp(surface.Visible,'on') && ...
+        all(arrayfun(@(h) strcmp(h.Visible,'on'),markers));
+else
+    pass = pass && state.status=="INSUFFICIENT_3D_SAMPLES" && ...
+        controls.selector.Value==1 && strcmp(surface.Visible,'off');
+end
+controls.selector.Value=1;
+controls.selector.Callback(controls.selector,[]);
+pass = pass && strcmp(surface.Visible,'off') && ...
+    all(arrayfun(@(h) strcmp(h.Visible,'on'),markers));
+end
+
+function pass = validateJointHistograms(workspace,robot)
+button = workspace.figures.jointHistogramsButton;
+button.Callback(button,[]);
+fig = getappdata(workspace.figures.main,'WorkspaceJointHistograms');
+cleanup = onCleanup(@() close(fig));
+plots = findobj(fig,'Type','histogram');
+selected = getappdata(fig,'HistogramSampleIndices');
+pass = numel(plots)==robot.structure.dof && ...
+    isequal(selected,find(workspace.masks.accepted));
+pass = pass && checkHistogramCounts(plots,workspace.samples.q(selected,:),robot);
+mode = findobj(fig,'Tag','HistogramPopulation');
+mode.Value = 2;
+mode.Callback(mode,[]);
+selected = getappdata(fig,'HistogramSampleIndices');
+voxels = workspace.samples.voxelCoordinates;
+expected = unique(voxels(workspace.masks.accepted,:),'rows');
+pass = pass && isequal(sortrows(voxels(selected,:)),expected) && ...
+    all(workspace.masks.accepted(selected)) && ...
+    checkHistogramCounts(plots,workspace.samples.q(selected,:),robot);
+for index = selected.'
+    group = all(voxels==voxels(index,:),2) & workspace.masks.accepted;
+    pass = pass && workspace.manipulability.values(index)== ...
+        max(workspace.manipulability.values(group));
+end
+button.Callback(button,[]);
+pass = pass && isequal(fig,getappdata(workspace.figures.main,'WorkspaceJointHistograms'));
+mode.Value = 1;
+mode.Callback(mode,[]);
+pass = pass && isequal(getappdata(fig,'HistogramSampleIndices'), ...
+    find(workspace.masks.accepted));
+end
+
+function pass = checkHistogramCounts(plots,q,robot)
+pass = true;
+for h = plots.'
+    expected = histcounts(h.Data,h.BinEdges);
+    joint = find(robot.structure.jointNames==string(h.Parent.Title.String));
+    pass = pass && isscalar(joint) && sum(h.Values)==size(q,1) && ...
+        isequal(h.Values,expected) && ...
+        isequal(h.Data(:),rad2deg(q(:,joint)));
+end
 end

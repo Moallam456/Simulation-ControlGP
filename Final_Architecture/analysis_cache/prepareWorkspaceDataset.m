@@ -18,7 +18,10 @@ cacheFile = cacheFileFor(robot,settings);
 kinematicSignature = createKinematicSignature(robot);
 samplingSignature = createSamplingSignature(settings);
 manipulabilitySignature = createManipulabilitySignature(settings);
-collisionSignature = createCollisionSignature(robot);
+collisionSignature = struct();
+if needsCollision
+    collisionSignature = createCollisionSignature(robot);
+end
 
 status.enabled = cacheEnabled;
 status.file = string(cacheFile);
@@ -181,7 +184,7 @@ end
 
 function signature = createCollisionSignature(robot)
 
-signature.algorithmVersion = 1;
+signature.algorithmVersion = 2;
 signature.robotID = string(robot.id);
 signature.environmentStatus = "NONE";
 signature.minimumClearance = 0.010;
@@ -190,13 +193,44 @@ if isfield(robot,'collision') && isstruct(robot.collision)
         signature.minimumClearance = robot.collision.minimumClearance;
     end
     signature.robotCollisionDefinition = robot.collision;
+    if isfield(robot.collision,'meshFiles')
+        files = string(robot.collision.meshFiles);
+        signature.meshContentSHA256 = strings(size(files));
+        for i = 1:numel(files)
+            signature.meshContentSHA256(i) = fileSHA256(files(i));
+        end
+    else
+        signature.meshContentSHA256 = strings(0,1);
+    end
 else
     signature.robotCollisionDefinition = struct();
+    signature.meshContentSHA256 = strings(0,1);
 end
 signature.bodyNames = string(robot.model.BodyNames);
 signature.attachedShapeCounts = cellfun( ...
     @(body) numel(body.Collisions),robot.model.Bodies);
 
+end
+
+function value = fileSHA256(path)
+if ~isfile(path)
+    value = "MISSING";
+    return;
+end
+fid = fopen(path,'rb');
+if fid < 0
+    error('workspace:UnreadableCollisionMesh', ...
+        'Could not read collision mesh: %s',path);
+end
+cleanup = onCleanup(@() fclose(fid)); %#ok<NASGU>
+digest = java.security.MessageDigest.getInstance('SHA-256');
+while true
+    chunk = fread(fid,1024*1024,'*uint8');
+    if isempty(chunk), break; end
+    digest.update(typecast(chunk,'int8'));
+end
+hex = dec2hex(typecast(int8(digest.digest()),'uint8'),2).';
+value = string(lower(hex(:).'));
 end
 
 function signature = createKinematicSignature(robot)
@@ -221,7 +255,7 @@ for p = 1:size(probeConfigurations,1)
     end
 end
 
-signature.version = 1;
+signature.version = 2;
 signature.robotID = string(robot.id);
 signature.dof = dof;
 signature.positionLimits = limits;
@@ -230,6 +264,16 @@ signature.jointNames = string(robot.structure.jointNames);
 signature.jointAxes = robot.structure.jointAxes;
 signature.baseFrame = string(robot.structure.frames.base);
 signature.endEffectorFrame = string(robot.structure.frames.endEffector);
+signature.flangeFrame = string(robot.structure.frames.flange);
+signature.toolTransform = robot.params.tool.TFlangeTCP;
+signature.toolVersion = "unspecified";
+signature.modelVersion = "unspecified";
+if isfield(robot.params.tool,'version')
+    signature.toolVersion = string(robot.params.tool.version);
+end
+if isfield(robot.params,'source') && isfield(robot.params.source,'modelVersion')
+    signature.modelVersion = string(robot.params.source.modelVersion);
+end
 signature.probeConfigurations = probeConfigurations;
 signature.probeTransforms = probeTransforms;
 end

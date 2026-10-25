@@ -137,6 +137,8 @@ trajectory.cartesian.tcpSpeed=allSpeed;
 trajectory.cartesian.arcLength=allArc;
 trajectory.meta.type=string(testCase.path.type);
 trajectory.meta.name=string(testCase.name);
+trajectory.meta.pointFrame=string(robot.structure.frames.endEffector);
+trajectory.meta.TFlangeTCP=robot.params.tool.TFlangeTCP;
 trajectory.meta.motionProfile=string(testCase.motion.profile);
 trajectory.meta.tcpSpeedCommand=testCase.motion.tcpSpeed;
 trajectory.meta.tcpAccelerationCommand=testCase.motion.tcpAcceleration;
@@ -220,6 +222,8 @@ for i=1:numel(t)
 end
 trajectory.meta.type="jointSpline";
 trajectory.meta.name=string(testCase.name);
+trajectory.meta.pointFrame=string(robot.structure.frames.endEffector);
+trajectory.meta.TFlangeTCP=robot.params.tool.TFlangeTCP;
 trajectory.meta.motionProfile="quintic";
 trajectory.meta.duration=motion.duration;
 trajectory.meta.timeStep=motion.timeStep;

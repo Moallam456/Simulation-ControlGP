@@ -62,6 +62,8 @@ function report = validateImportedVisuals(robot)
 allBodies = [{robot.model.Base} robot.model.Bodies];
 report.visualCounts = cellfun(@(body) numel(body.Visuals),allBodies);
 report.collisionCounts = cellfun(@(body) numel(body.Collisions),allBodies);
+frameOnly = [false cellfun(@(body) strcmp(body.Joint.Type,'fixed') && ...
+    body.Mass==0 && isempty(body.Visuals) && isempty(body.Collisions),robot.model.Bodies)];
 report.maxFKError_m = 0;
 q = robot.params.joints.homePosition;
 for i = 1:robot.structure.dof
@@ -71,7 +73,8 @@ for i = 1:robot.structure.dof
     report.maxFKError_m = max(report.maxFKError_m, ...
         norm(tcp(1:3,4)-expected(1:3,4)));
 end
-report.pass = all(report.visualCounts>0) && all(report.collisionCounts>0) && ...
+report.pass = all(report.visualCounts(~frameOnly)>0) && ...
+    all(report.collisionCounts(~frameOnly)>0) && ...
     report.maxFKError_m < 1e-12;
 fprintf('Imported visual/collision geometry: %s\n',string(report.pass));
 end

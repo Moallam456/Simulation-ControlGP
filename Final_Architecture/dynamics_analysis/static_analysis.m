@@ -12,6 +12,7 @@ q = reshape(robot.params.joints.homePosition,1,[]);
 jointNames = string(robot.structure.jointNames);
 torque = nan(1,dof);
 calculated = false;
+settingConfiguration = false;
 
 fig = figure('Name',sprintf('%s | Static analysis',robot.id), ...
     'NumberTitle','off','Color','w','Position',[80 80 1400 800]);
@@ -46,6 +47,7 @@ controls = uipanel(fig,'Title','Joint angles (deg)', ...
     'Units','normalized','Position',[0.60 0.53 0.36 0.38], ...
     'BackgroundColor','w','FontWeight','bold');
 sliders = gobjects(dof,1);
+sliderListeners = cell(dof,2);
 angleLabels = gobjects(dof,1);
 rowHeight = 0.88/dof;
 for j = 1:dof
@@ -64,7 +66,12 @@ for j = 1:dof
         'Position',[0.81 rowY 0.17 rowHeight*0.75], ...
         'String',sprintf('%+.1f',rad2deg(q(j))), ...
         'HorizontalAlignment','right','BackgroundColor','w');
+    sliderListeners{j,1} = addlistener(sliders(j),'ContinuousValueChange', ...
+        @(~,~) sliderChanged(j));
+    sliderListeners{j,2} = addlistener(sliders(j),'Value','PostSet', ...
+        @(~,~) sliderChanged(j));
 end
+setappdata(fig,'StaticAnalysisSliderListeners',sliderListeners);
 
 uicontrol(fig,'Style','pushbutton','Units','normalized', ...
     'Position',[0.60 0.46 0.22 0.055],'String','Calculate', ...
@@ -109,7 +116,11 @@ session.getState = @getState;
 session.close = @() close(fig);
 
     function sliderChanged(jointIndex)
-        q(jointIndex) = get(sliders(jointIndex),'Value');
+        value = get(sliders(jointIndex),'Value');
+        if settingConfiguration || q(jointIndex)==value
+            return;
+        end
+        q(jointIndex) = value;
         updatePose();
     end
 
@@ -121,9 +132,11 @@ session.close = @() close(fig);
                 'Configuration must be a finite, limit-valid %d-joint row in radians.',dof);
         end
         q = configuration;
+        settingConfiguration = true;
         for k = 1:dof
             set(sliders(k),'Value',q(k));
         end
+        settingConfiguration = false;
         updatePose();
     end
 
@@ -133,12 +146,14 @@ session.close = @() close(fig);
         end
         show(robot.model,q,'Parent',robotAx,'FastUpdate',true, ...
             'Frames','off','PreservePlot',false);
-        calculated = false;
-        torque(:) = nan;
+        if calculated
+            calculated = false;
+            torque(:) = nan;
+            set(torqueTable,'Data',[cellstr(jointNames(:)) repmat({''},dof,1)]);
+            drawTorqueChart();
+        end
         set(resultLabel,'String','Pose changed. Press Calculate.');
-        set(torqueTable,'Data',[cellstr(jointNames(:)) repmat({''},dof,1)]);
-        drawTorqueChart();
-        drawnow limitrate;
+        drawnow limitrate nocallbacks;
     end
 
     function calculateTorques()

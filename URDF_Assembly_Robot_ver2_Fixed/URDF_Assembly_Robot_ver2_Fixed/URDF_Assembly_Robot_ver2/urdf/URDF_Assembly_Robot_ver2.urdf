@@ -4,6 +4,10 @@
      For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
 <robot
   name="URDF_Assembly_Robot_ver2">
+  <!-- Moving-link COMs and COM inertias are expressed in each URDF link frame,
+       converted from the Inventor Y-up assembly frame at the zero pose.
+       Joint position limits and effort/velocity values below are provisional.
+       Effort and velocity are software placeholders, not actuator ratings. -->
   <link
     name="Base_Link">
     <inertial>
@@ -26,7 +30,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Assembly_Robot_ver2/meshes/Base_Link.STL" />
+          filename="package://URDF_Assembly_Robot_ver2/meshes/robot_ver2_Base_Link.STL" />
       </geometry>
       <material
         name="">
@@ -40,7 +44,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Assembly_Robot_ver2/meshes/Base_Link.STL" />
+          filename="package://URDF_Assembly_Robot_ver2/meshes/robot_ver2_Base_Link.STL" />
       </geometry>
     </collision>
   </link>
@@ -48,17 +52,17 @@
     name="Link_1">
     <inertial>
       <origin
-        xyz="-0.000010 0.314143 0.024003"
+        xyz="-0.000010000 -0.024003000 0.114143000"
         rpy="0 0 0" />
       <mass
         value="4.393" />
       <inertia
         ixx="0.017894845"
-        ixy="0.00000097"
-        ixz="0.000001148"
-        iyy="0.01203164"
-        iyz="-0.001949386"
-        izz="0.015147419" />
+        ixy="-0.000001148"
+        ixz="0.000000970"
+        iyy="0.015147419"
+        iyz="0.001949386"
+        izz="0.012031640" />
     </inertial>
     <visual>
       <origin
@@ -66,7 +70,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Assembly_Robot_ver2/meshes/Link_1.STL" />
+          filename="package://URDF_Assembly_Robot_ver2/meshes/robot_ver2_Link_1.STL" />
       </geometry>
       <material
         name="">
@@ -80,7 +84,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Assembly_Robot_ver2/meshes/Link_1.STL" />
+          filename="package://URDF_Assembly_Robot_ver2/meshes/robot_ver2_Link_1.STL" />
       </geometry>
     </collision>
   </link>
@@ -97,22 +101,22 @@
     <axis
       xyz="0 0 -1" />
     <limit
-      lower="0"
-      upper="0"
-      effort="0"
-      velocity="0" />
+      lower="-3.141592653589793"
+      upper="3.141592653589793"
+      effort="1000"
+      velocity="3.141592653589793" />
   </joint>
   <link
     name="Link_2">
     <inertial>
       <origin
-        xyz="0 0.627232 0.266819"
+        xyz="0 -0.295232000 -0.186319000"
         rpy="0 0 0" />
       <mass
         value="5.113" />
       <inertia
         ixx="0.235463496"
-        ixy="0.000000003"
+        ixy="-0.000000003"
         ixz="0"
         iyy="0.030331894"
         iyz="-0.034873247"
@@ -124,7 +128,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Assembly_Robot_ver2/meshes/Link_2.STL" />
+          filename="package://URDF_Assembly_Robot_ver2/meshes/robot_ver2_Link_2.STL" />
       </geometry>
       <material
         name="">
@@ -138,7 +142,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Assembly_Robot_ver2/meshes/Link_2.STL" />
+          filename="package://URDF_Assembly_Robot_ver2/meshes/robot_ver2_Link_2.STL" />
       </geometry>
     </collision>
   </link>
@@ -155,23 +159,23 @@
     <axis
       xyz="0 0 -1" />
     <limit
-      lower="0"
-      upper="0"
-      effort="0"
-      velocity="0" />
+      lower="-3.141592653589793"
+      upper="3.141592653589793"
+      effort="1000"
+      velocity="3.141592653589793" />
   </joint>
   <link
     name="Link_3">
     <inertial>
       <origin
-        xyz="-0.223543 0.922111 0.109483"
+        xyz="-0.223543000 -0.000156321 0.126517000"
         rpy="0 0 0" />
       <mass
         value="3.587" />
       <inertia
         ixx="0.015695173"
-        ixy="0.000072384"
-        ixz="-0.018629032"
+        ixy="-0.000072384"
+        ixz="0.018629032"
         iyy="0.117469522"
         iyz="0.000003215"
         izz="0.108674954" />
@@ -182,7 +186,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Assembly_Robot_ver2/meshes/Link_3.STL" />
+          filename="package://URDF_Assembly_Robot_ver2/meshes/robot_ver2_Link_3.STL" />
       </geometry>
       <material
         name="">
@@ -196,7 +200,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Assembly_Robot_ver2/meshes/Link_3.STL" />
+          filename="package://URDF_Assembly_Robot_ver2/meshes/robot_ver2_Link_3.STL" />
       </geometry>
     </collision>
   </link>
@@ -213,23 +217,23 @@
     <axis
       xyz="0 0 1" />
     <limit
-      lower="0"
-      upper="0"
-      effort="0"
-      velocity="0" />
+      lower="-3.141592653589793"
+      upper="3.141592653589793"
+      effort="1000"
+      velocity="3.141592653589793" />
   </joint>
   <link
     name="Link_4">
     <inertial>
       <origin
-        xyz="-0.404503 0.942319 0.235176"
+        xyz="-0.000003039 -0.020318997 -0.112176000"
         rpy="0 0 0" />
       <mass
         value="1.634" />
       <inertia
         ixx="0.005047515"
-        ixy="-0.00000002"
-        ixz="-0.000000023"
+        ixy="0.000000020"
+        ixz="0.000000023"
         iyy="0.004639205"
         iyz="-0.000524855"
         izz="0.003408745" />
@@ -240,7 +244,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Assembly_Robot_ver2/meshes/Link_4.STL" />
+          filename="package://URDF_Assembly_Robot_ver2/meshes/robot_ver2_Link_4.STL" />
       </geometry>
       <material
         name="">
@@ -254,7 +258,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Assembly_Robot_ver2/meshes/Link_4.STL" />
+          filename="package://URDF_Assembly_Robot_ver2/meshes/robot_ver2_Link_4.STL" />
       </geometry>
     </collision>
   </link>
@@ -271,26 +275,26 @@
     <axis
       xyz="0 0 -1" />
     <limit
-      lower="0"
-      upper="0"
-      effort="0"
-      velocity="0" />
+      lower="-3.141592653589793"
+      upper="3.141592653589793"
+      effort="1000"
+      velocity="3.141592653589793" />
   </joint>
   <link
     name="Link_5">
     <inertial>
       <origin
-        xyz="-0.424819 1.088176 0.249503"
+        xyz="-0.020319039 0.007003000 -0.110676000"
         rpy="0 0 0" />
       <mass
         value="1.634" />
       <inertia
         ixx="0.004639205"
-        ixy="0.000524855"
-        ixz="-0.00000002"
-        iyy="0.003408745"
-        iyz="0.000000023"
-        izz="0.005047515" />
+        ixy="-0.000000020"
+        ixz="-0.000524855"
+        iyy="0.005047515"
+        iyz="-0.000000023"
+        izz="0.003408745" />
     </inertial>
     <visual>
       <origin
@@ -298,7 +302,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Assembly_Robot_ver2/meshes/Link_5.STL" />
+          filename="package://URDF_Assembly_Robot_ver2/meshes/robot_ver2_Link_5.STL" />
       </geometry>
       <material
         name="">
@@ -312,7 +316,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Assembly_Robot_ver2/meshes/Link_5.STL" />
+          filename="package://URDF_Assembly_Robot_ver2/meshes/robot_ver2_Link_5.STL" />
       </geometry>
     </collision>
   </link>
@@ -329,26 +333,26 @@
     <axis
       xyz="0 0 -1" />
     <limit
-      lower="0"
-      upper="0"
-      effort="0"
-      velocity="0" />
+      lower="-3.141592653589793"
+      upper="3.141592653589793"
+      effort="1000"
+      velocity="3.141592653589793" />
   </joint>
   <link
     name="End_Effector">
     <inertial>
       <origin
-        xyz="-0.526331 1.147762 0.250909"
+        xyz="-0.008408756 -0.050761756 0.066331256"
         rpy="0 0 0" />
       <mass
         value="1.134" />
       <inertia
-        ixx="0.001211865"
-        ixy="0.000351438"
-        ixz="0.000223285"
-        iyy="0.004477521"
-        iyz="0.000033233"
-        izz="0.005579271" />
+        ixx="0.005579273"
+        ixy="0.000033235"
+        ixz="0.000223269"
+        iyy="0.004477524"
+        iyz="0.000351426"
+        izz="0.001211861" />
     </inertial>
     <visual>
       <origin
@@ -356,7 +360,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Assembly_Robot_ver2/meshes/End_Effector.STL" />
+          filename="package://URDF_Assembly_Robot_ver2/meshes/robot_ver2_End_Effector.STL" />
       </geometry>
       <material
         name="">
@@ -370,7 +374,7 @@
         rpy="0 0 0" />
       <geometry>
         <mesh
-          filename="package://URDF_Assembly_Robot_ver2/meshes/End_Effector.STL" />
+          filename="package://URDF_Assembly_Robot_ver2/meshes/robot_ver2_End_Effector.STL" />
       </geometry>
     </collision>
   </link>
@@ -387,9 +391,23 @@
     <axis
       xyz="0 0 1" />
     <limit
-      lower="0"
-      upper="0"
-      effort="0"
-      velocity="0" />
+      lower="-3.141592653589793"
+      upper="3.141592653589793"
+      effort="1000"
+      velocity="3.141592653589793" />
+  </joint>
+  <!-- Distribution copy of Final_Architecture robot_ver2 tcp_fixed.
+       Joint-6-relative measurement supplied 2026-10-15, axes unchanged. -->
+  <link name="tcp">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0" />
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
+    </inertial>
+  </link>
+  <joint name="tcp_fixed" type="fixed">
+    <origin xyz="-0.02287 0.02053 0.24577" rpy="0 0 0" />
+    <parent link="End_Effector" />
+    <child link="tcp" />
   </joint>
 </robot>

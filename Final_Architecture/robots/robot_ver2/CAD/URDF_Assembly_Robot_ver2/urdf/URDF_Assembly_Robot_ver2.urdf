@@ -4,6 +4,8 @@
      For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
 <robot
   name="URDF_Assembly_Robot_ver2">
+  <!-- Joint position limits and effort/velocity values are provisional.
+       Effort and velocity are software placeholders, not actuator ratings. -->
   <link
     name="Base_Link">
     <inertial>
@@ -99,10 +101,10 @@
     <axis
       xyz="0 0 -1" />
     <limit
-      lower="0"
-      upper="0"
-      effort="0"
-      velocity="0" />
+      lower="-3.141592653589793"
+      upper="3.141592653589793"
+      effort="1000"
+      velocity="3.141592653589793" />
   </joint>
   <link
     name="Link_2">
@@ -157,10 +159,10 @@
     <axis
       xyz="0 0 -1" />
     <limit
-      lower="0"
-      upper="0"
-      effort="0"
-      velocity="0" />
+      lower="-3.141592653589793"
+      upper="3.141592653589793"
+      effort="1000"
+      velocity="3.141592653589793" />
   </joint>
   <link
     name="Link_3">
@@ -215,10 +217,10 @@
     <axis
       xyz="0 0 1" />
     <limit
-      lower="0"
-      upper="0"
-      effort="0"
-      velocity="0" />
+      lower="-3.141592653589793"
+      upper="3.141592653589793"
+      effort="1000"
+      velocity="3.141592653589793" />
   </joint>
   <link
     name="Link_4">
@@ -273,10 +275,10 @@
     <axis
       xyz="0 0 -1" />
     <limit
-      lower="0"
-      upper="0"
-      effort="0"
-      velocity="0" />
+      lower="-3.141592653589793"
+      upper="3.141592653589793"
+      effort="1000"
+      velocity="3.141592653589793" />
   </joint>
   <link
     name="Link_5">
@@ -331,10 +333,10 @@
     <axis
       xyz="0 0 -1" />
     <limit
-      lower="0"
-      upper="0"
-      effort="0"
-      velocity="0" />
+      lower="-3.141592653589793"
+      upper="3.141592653589793"
+      effort="1000"
+      velocity="3.141592653589793" />
   </joint>
   <link
     name="End_Effector">
@@ -389,9 +391,24 @@
     <axis
       xyz="0 0 1" />
     <limit
-      lower="0"
-      upper="0"
-      effort="0"
-      velocity="0" />
+      lower="-3.141592653589793"
+      upper="3.141592653589793"
+      effort="1000"
+      velocity="3.141592653589793" />
+  </joint>
+  <!-- TCP measured relative to Joint 6 / End_Effector, supplied 2026-10-15:
+       [-22.87, +20.53, +245.77] mm; axes parallel to Joint 6.
+       The existing End_Effector already owns the torch mesh and inertia. -->
+  <link name="tcp">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0" />
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
+    </inertial>
+  </link>
+  <joint name="tcp_fixed" type="fixed">
+    <origin xyz="-0.02287 0.02053 0.24577" rpy="0 0 0" />
+    <parent link="End_Effector" />
+    <child link="tcp" />
   </joint>
 </robot>
