@@ -142,6 +142,17 @@ the project copy. Validation checks that each imported COM lies within 1 mm
 of its own STL's bounding box and that the inertia tensors are physically
 valid.
 
+## Simscape Multibody
+
+Run `open_robot_ver2_multibody` without arguments, then **Ctrl+D** and **Run**
+in Simulink. `multibody/robot_ver2_multibody.slx` contains the torque-driven
+physical plant, measured joint/TCP outputs and a removable PD demonstration.
+The model uses this robot's corrected URDF, not a separate set of masses or
+frames. See [Opening and Control Interface](multibody/README.md) for the
+step-by-step guide. `validate_robot_ver2_multibody` compares the physical plant
+with existing FK and dynamics. Motors, gearboxes and collision/contact forces
+are not silently added by the URDF import.
+
 ## Load Study
 
 `park_position_analysis` uses this robot's folded-back and upright/folded

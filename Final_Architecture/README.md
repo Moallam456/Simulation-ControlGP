@@ -68,6 +68,10 @@ robots/robot_ver2/
   robotDefinition.m
   solveInverseKinematics.m
   dynamicsTestCases.m
+  multibody/
+    robot_ver2_multibody.slx
+    open_robot_ver2_multibody.m
+    build_robot_ver2_multibody.m
   collision/collisionGeometry.m
   CAD/URDF_Assembly_Robot_ver2/
     urdf/URDF_Assembly_Robot_ver2.urdf
@@ -84,6 +88,15 @@ as historical source, not loaded by this robot.
 The model has six moving joints, and the copied mesh names are unique to
 `robot_ver2`. See [robot_ver2/README.md](robots/robot_ver2/README.md) for its
 CAD conversion and case details.
+
+For **robot_ver2 only**, run `open_robot_ver2_multibody`, then **Ctrl+D** and
+**Run** in Simulink. The saved Simscape Multibody control bench contains a
+six-joint torque-driven `RobotPlant`, a removable demonstration controller,
+and measured joint/TCP signals. The URDF and meshes remain in this robot's
+folder. This model is explicitly robot_ver2 regardless of `projectConfig.m`.
+See [Multibody Instructions](robots/robot_ver2/multibody/README.md) for opening,
+signal units, regeneration, validation and modeling scope. No other robot
+model or existing analysis is converted or replaced.
 
 **Open inputs for `robot_ver2`:** The `[-pi,pi]` joint ranges are configured
 placeholders, not measured mechanical stops. Workspace plots use the fixed

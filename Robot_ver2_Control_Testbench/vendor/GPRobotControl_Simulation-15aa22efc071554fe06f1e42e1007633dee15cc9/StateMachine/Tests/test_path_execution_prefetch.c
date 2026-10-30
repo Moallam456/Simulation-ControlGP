@@ -1,0 +1,497 @@
+/* Real execution state + SRAM prefetch + fake six-axis drive port.
+ * No physical motor behavior or wall-clock deadline claims. */
+#include "../States/state_path_execution.h"
+#include "../../Simulation/Storage/trajectory_prefetch.h"
+#include "fake_joint_drive.h"
+#include <assert.h>
+#include <limits.h>
+#include <stdio.h>
+
+typedef struct {
+    TrajectoryPrefetch stream;
+    FakeDrive drive;
+    PathExecutionState execution;
+    ValidatedTrajectory metadata;
+    uint32_t fail_at, read_calls, next_ms;
+    unsigned wire_enables, releases, stop_calls;
+    bool wire, stop_error;
+} Test;
+
+static int32_t value(uint32_t index, unsigned joint)
+{
+    int32_t magnitude = (int32_t)(index * 97U + joint * 13U + 1000U);
+    return joint % 2U ? -magnitude : magnitude;
+}
+
+static bool read_batch(uint32_t first, PvExecutionSample *out, uint32_t count, void *ctx)
+{
+    Test *t = ctx;
+    ++t->read_calls;
+    if (first >= t->fail_at) return false;
+    for (uint32_t i = 0; i < count; ++i)
+        for (unsigned j = 0; j < 6; ++j)
+            out[i].target_position_units[j] = value(first + i, j);
+    return true;
+}
+
+static bool take(uint32_t index, PvExecutionSample *sample, void *ctx)
+{
+    Test *t = ctx;
+    uint32_t before = t->read_calls;
+    bool ok = trajectory_prefetch_take(&t->stream, index, sample);
+    assert(before == t->read_calls);
+    return ok;
+}
+
+static bool discard(uint32_t first, uint32_t count, void *ctx)
+{
+    Test *t = ctx;
+    return trajectory_prefetch_skip(&t->stream, first, count);
+}
+
+static bool ready(uint32_t index, uint32_t count, void *ctx)
+{
+    Test *t = ctx;
+    uint32_t before = t->read_calls;
+    bool ok = trajectory_prefetch_begin_execution(&t->stream, index, count);
+    assert(before == t->read_calls);
+    return ok;
+}
+
+static void end_stream(void *ctx)
+{
+    Test *t = ctx;
+    ++t->releases;
+    trajectory_prefetch_end_execution(&t->stream);
+}
+
+static bool relay(bool enable, void *ctx)
+{
+    Test *t = ctx;
+    t->wire = enable;
+    if (enable) ++t->wire_enables;
+    return true;
+}
+static bool retract_prepare(void *ctx) { (void)ctx; return true; }
+static StateStepResult retract_step(void *ctx) { (void)ctx; return STATE_STEP_COMPLETE; }
+static bool clearance(void *ctx) { (void)ctx; return true; }
+static bool stop(bool *stopped, void *ctx)
+{
+    Test *t = ctx;
+    assert(!t->wire); /* welding must be OFF before hold is requested */
+    ++t->stop_calls;
+    *stopped = !t->stop_error;
+    return !t->stop_error;
+}
+
+static void enter(Test *t, RobotExecutionMode mode)
+{
+    PathExecutionRequest request = {
+        .mode = mode, .trajectory = &t->metadata, .trajectory_ready = true,
+        .expected_program_id = t->metadata.program_id,
+        .expected_source_revision = t->metadata.source_revision,
+        .expected_artifact_crc = t->metadata.artifact_crc
+    };
+    PathExecutionConfig config = {1000, 1, 0};
+    PathExecutionServices services = {
+        .read_sample = take, .set_wire_feed_enabled = relay,
+        .prepare_retraction = retract_prepare, .step_retraction = retract_step,
+        .clearance_verified = clearance, .controlled_stop = stop,
+        .context = t, .skip_samples = discard,
+        .stream_ready = ready, .end_stream = end_stream
+    };
+    JointDrivePort port = fake_joint_drive_make_port(&t->drive);
+    state_path_execution_enter(&t->execution, &port, &request, &config, &services);
+    assert(t->execution.command_period_ms == 2);
+}
+
+static void init(Test *t, uint32_t count, unsigned prefill, uint32_t fail_at)
+{
+    memset(t, 0, sizeof(*t));
+    t->fail_at = fail_at;
+    fake_joint_drive_reset(&t->drive);
+    t->drive.auto_feedback = true;
+    t->metadata = (ValidatedTrajectory){
+        .program_id = 1, .source_revision = 2, .artifact_crc = 3,
+        .sample_count = count, .sample_period_us = 2000
+    };
+    assert(trajectory_prefetch_init(&t->stream));
+    assert(trajectory_prefetch_prepare(&t->stream, read_batch, t, count));
+    for (unsigned i = 0; i < prefill; ++i)
+        (void)trajectory_prefetch_refill(&t->stream);
+    assert(trajectory_prefetch_resume_worker(&t->stream) == (fail_at != 0));
+    enter(t, ROBOT_EXECUTION_PRODUCTION);
+}
+
+static StateStepResult step(Test *t, bool abort_home)
+{
+    PathExecutionInputs inputs = {
+        .motion_permission = true, .now_ms = t->next_ms,
+        .now_us = (uint64_t)t->next_ms * 1000U,
+        .home_requested = abort_home
+    };
+    ++t->next_ms;
+    PathExecutionOutputs outputs;
+    unsigned before = t->drive.commands;
+    uint32_t index = t->execution.sample_index;
+    StateStepResult result = state_path_execution_step(&t->execution, &inputs, &outputs);
+    if (t->drive.commands != before) {
+        assert(t->drive.commands == before + 1U);
+        assert(t->execution.sample_index == index + 1U);
+        for (unsigned j = 0; j < 6; ++j)
+            assert(t->drive.last_targets[j] == value(index, j));
+    }
+    return result;
+}
+
+static void complete(Test *t, bool refill)
+{
+    StateStepResult result = STATE_STEP_RUNNING;
+    for (unsigned i = 0; i < 10000 && result == STATE_STEP_RUNNING; ++i) {
+        result = step(t, false);
+        if (refill) (void)trajectory_prefetch_worker_step(&t->stream);
+    }
+    assert(result == STATE_STEP_COMPLETE);
+    assert(t->execution.result == PATH_EXEC_RESULT_COMPLETE);
+    assert(!t->wire);
+}
+
+static void test_startup(void)
+{
+    const uint32_t counts[] = {1, 3, 256, 257, 511, 512, 513};
+    for (unsigned i = 0; i < sizeof(counts) / sizeof(counts[0]); ++i) {
+        Test t;
+        init(&t, counts[i], 2, UINT32_MAX);
+        complete(&t, true);
+        assert(t.drive.commands == counts[i]);
+    }
+    Test t;
+    init(&t, 513, 1, UINT32_MAX); /* 256 samples cannot satisfy fresh preflight */
+    assert(step(&t, false) == STATE_STEP_FAILED);
+    assert(t.execution.error == PATH_EXEC_ERR_TRAJECTORY_NOT_READY);
+    assert(t.wire_enables == 0 && t.drive.commands == 0);
+    init(&t, 3, 0, UINT32_MAX);
+    assert(step(&t, false) == STATE_STEP_FAILED);
+    assert(t.wire_enables == 0 && t.drive.commands == 0);
+    init(&t, 3, 1, 0);
+    assert(step(&t, false) == STATE_STEP_FAILED);
+    assert(t.wire_enables == 0 && t.drive.commands == 0);
+    init(&t, 3, 2, UINT32_MAX);
+    assert(step(&t, false) == STATE_STEP_RUNNING);
+    assert(t.execution.phase == PATH_EXEC_PHASE_CONFIGURE_WIRE_FEED);
+    __atomic_store_n(&t.stream.read_failed, true, __ATOMIC_RELEASE);
+    assert(step(&t, false) == STATE_STEP_FAILED);
+    assert(t.wire_enables == 0 && t.drive.commands == 0);
+    puts("[PASS] Short/full startup, insufficient/failed prefill and failure before relay enable");
+}
+
+static void test_final_feedback_replay_pause_abort(void)
+{
+    Test t;
+    init(&t, 3, 2, UINT32_MAX);
+    enter(&t, ROBOT_EXECUTION_PREVIEW);
+    while (t.drive.commands < 2) assert(step(&t, false) == STATE_STEP_RUNNING);
+    /* Complete feedback for command 2, then hold final feedback. */
+    assert(fake_drive_poll(&t.drive, t.next_ms));
+    t.drive.auto_feedback = false;
+    while (t.drive.commands < 3) assert(step(&t, false) == STATE_STEP_RUNNING);
+    for (unsigned i = 0; i < 5; ++i) {
+        assert(trajectory_prefetch_worker_step(&t.stream));
+        assert(step(&t, false) == STATE_STEP_RUNNING);
+        assert(t.execution.feedback_watch_started);
+        assert(__atomic_load_n(&t.stream.consumed, __ATOMIC_ACQUIRE) == 3);
+    }
+    assert(t.releases == 0 && t.wire_enables == 0);
+    t.drive.auto_feedback = true;
+    complete(&t, true);
+    state_path_execution_release_stream(&t.execution); /* Supervisor exits execution */
+    assert(t.releases == 1);
+    assert(trajectory_prefetch_worker_step(&t.stream));
+    enter(&t, ROBOT_EXECUTION_PRODUCTION);
+    while (t.execution.sample_index < 1) assert(step(&t, false) == STATE_STEP_RUNNING);
+    t.wire = false; /* existing PAUSED relay policy */
+    assert(trajectory_prefetch_worker_step(&t.stream));
+    state_path_execution_resume(&t.execution, t.next_ms);
+    assert(t.releases == 1);
+    assert(__atomic_load_n(&t.stream.consumed, __ATOMIC_ACQUIRE) == 1);
+    assert(step(&t, false) == STATE_STEP_RUNNING);
+    assert(t.wire && t.execution.sample_index == 1);
+    complete(&t, true);
+    state_path_execution_release_stream(&t.execution);
+    assert(trajectory_prefetch_worker_step(&t.stream));
+    enter(&t, ROBOT_EXECUTION_PRODUCTION);
+    while (t.execution.sample_index < 1) assert(step(&t, false) == STATE_STEP_RUNNING);
+    assert(step(&t, true) == STATE_STEP_RUNNING);
+    assert(!t.wire);
+    unsigned commands = t.drive.commands;
+    while (step(&t, false) == STATE_STEP_RUNNING) { }
+    assert(t.execution.result == PATH_EXEC_RESULT_ABORTED && t.stop_calls == 1);
+    assert(t.drive.commands == commands);
+    state_path_execution_release_stream(&t.execution);
+    assert(trajectory_prefetch_worker_step(&t.stream));
+    enter(&t, ROBOT_EXECUTION_PREVIEW);
+    complete(&t, true);
+    assert(t.drive.commands == commands + 3);
+    puts("[PASS] Final feedback holds ownership; preview/production, pause/resume, abort/restart");
+}
+
+static void test_runtime_faults(void)
+{
+    for (unsigned failure = 0; failure < 2; ++failure) {
+        Test t;
+        init(&t, 1024, 2, UINT32_MAX);
+        while (t.execution.sample_index < (failure ? 256U : 512U))
+            assert(step(&t, false) == STATE_STEP_RUNNING);
+        if (failure) {
+            t.fail_at = 512;
+            assert(!trajectory_prefetch_worker_step(&t.stream));
+        }
+        StateStepResult result = STATE_STEP_RUNNING;
+        unsigned commands = t.drive.commands;
+        for (unsigned i = 0; i < 10 && result == STATE_STEP_RUNNING; ++i)
+            result = step(&t, false);
+        assert(result == STATE_STEP_FAILED && t.execution.error == PATH_EXEC_ERR_STORAGE_READ);
+        assert(!t.wire && t.drive.commands == commands);
+        /* Fault-phase steps cannot read/advance another trajectory sample. */
+        assert(step(&t, false) == STATE_STEP_FAILED);
+        assert(t.drive.commands == commands);
+        assert(t.stop_calls == 1); /* request one controlled hold before FAULT */
+        state_path_execution_release_stream(&t.execution);
+    }
+    Test t;
+    init(&t, 1024, 2, UINT32_MAX);
+    while (t.execution.sample_index < 512) assert(step(&t, false) == STATE_STEP_RUNNING);
+    t.wire = false;
+    state_path_execution_resume(&t.execution, t.next_ms);
+    unsigned enables = t.wire_enables;
+    assert(step(&t, false) == STATE_STEP_FAILED);
+    assert(t.wire_enables == enables && !t.wire);
+    init(&t, 1024, 2, UINT32_MAX);
+    while (t.execution.sample_index < 512U)
+        assert(step(&t, false) == STATE_STEP_RUNNING);
+    t.stop_error = true;
+    StateStepResult stop_failure = STATE_STEP_RUNNING;
+    for (unsigned i = 0; i < 10U && stop_failure == STATE_STEP_RUNNING; ++i)
+        stop_failure = step(&t, false);
+    assert(stop_failure == STATE_STEP_FAILED);
+    assert(t.execution.error == PATH_EXEC_ERR_COMMUNICATION);
+    assert(t.stop_calls == 1U && !t.wire);
+    assert(step(&t, false) == STATE_STEP_FAILED && t.stop_calls == 1U);
+    puts("[PASS] Runtime read failure/starvation request one hold; rejected hold fails closed");
+}
+
+/* Explicit clock jumps bypass the normal 1-ms test helper. */
+static StateStepResult step_at(Test *t, uint32_t ms)
+{
+    PathExecutionInputs inputs = {
+        .motion_permission = true, .now_ms = ms,
+        .now_us = (uint64_t)ms * 1000U
+    };
+    PathExecutionOutputs outputs = {0};
+    t->next_ms = ms + 1U;
+    return state_path_execution_step(&t->execution, &inputs, &outputs);
+}
+
+static void test_time_paced_feedback_and_skips(void)
+{
+    Test t;
+    init(&t, 64, 2, UINT32_MAX);
+    /* Initial phases do not send commands. */
+    assert(step_at(&t, 0) == STATE_STEP_RUNNING);
+    assert(step_at(&t, 1) == STATE_STEP_RUNNING);
+    assert(step_at(&t, 2) == STATE_STEP_RUNNING);
+    assert(t.drive.commands == 1U && t.execution.sample_index == 1U);
+
+    /* Simulate a late supervisor activation, advancing the absolute
+     * cursor instead of replaying expired positions or stretching time. */
+    assert(step_at(&t, 13) == STATE_STEP_RUNNING);
+    assert(t.execution.skipped_samples == 4U);
+    assert(t.execution.sample_index == 6U);
+    assert(t.drive.commands == 2U);
+    assert(t.drive.last_targets[0] == value(5, 0));
+    assert(__atomic_load_n(&t.stream.consumed, __ATOMIC_ACQUIRE) == 6U);
+    assert(step_at(&t, 14) == STATE_STEP_RUNNING);
+    assert(t.execution.sample_index == 7U);
+    assert(t.drive.last_targets[0] == value(6, 0));
+    assert(t.execution.skipped_samples == 4U);
+    puts("[PASS] Absolute deadlines, skipped cursor, nonblocking SRAM discard");
+}
+
+static void test_delayed_axis_feedback(void)
+{
+    Test t;
+    init(&t, 64, 2, UINT32_MAX);
+    t.drive.auto_feedback = false;
+    unsigned commands_at_6 = 0U;
+    for (uint32_t ms = 0; ms <= 16; ++ms) {
+        /* Five nodes update independently; axis 0 is deliberately delayed. */
+        for (size_t axis = 1U; axis < JOINT_DRIVE_AXES; ++axis) {
+            ++t.drive.sequence[axis];
+            t.drive.axis[axis].timestamp_us = (uint64_t)ms * 1000U;
+        }
+        if (ms == 12U) {
+            ++t.drive.sequence[0];
+            t.drive.axis[0].timestamp_us = 12000U;
+        }
+        assert(step_at(&t, ms) == STATE_STEP_RUNNING);
+        if (ms == 6U) commands_at_6 = t.drive.commands;
+    }
+    assert(commands_at_6 == 3U); /* t0=2ms -> samples 0,1,2 */
+    assert(t.drive.commands == 8U); /* due sample index 7 at t=16ms */
+    assert(t.execution.skipped_samples == 0U);
+    assert(t.execution.error == PATH_EXEC_ERR_NONE && t.stop_calls == 0U);
+    puts("[PASS] Delayed single-axis TPDO does not gate cadence below age limit");
+}
+
+static void test_expired_final_target_fails_closed(void)
+{
+    Test t;
+    init(&t, 4U, 2U, UINT32_MAX);
+    assert(step_at(&t, 0) == STATE_STEP_RUNNING);
+    assert(step_at(&t, 1) == STATE_STEP_RUNNING);
+    assert(step_at(&t, 2) == STATE_STEP_RUNNING);
+    const unsigned commands = t.drive.commands;
+    /* t0=2ms; last index 3 deadline=8ms; at 11ms it expired. */
+    assert(step_at(&t, 11) == STATE_STEP_FAILED);
+    assert(t.execution.error == PATH_EXEC_ERR_MISSED_DEADLINE);
+    assert(t.execution.skipped_samples == 3U);
+    assert(t.drive.commands == commands);
+    assert(t.stop_calls == 1U && !t.wire);
+    puts("[PASS] Expired final target cannot be transmitted; counted and held");
+}
+
+static void test_missing_axis_fault_and_reentry(void)
+{
+    Test t;
+    init(&t, 64, 2, UINT32_MAX);
+    t.drive.auto_feedback = false;
+    StateStepResult result = STATE_STEP_RUNNING;
+    for (uint32_t ms = 0; ms < 28U && result == STATE_STEP_RUNNING; ++ms) {
+        for (size_t axis = 1U; axis < JOINT_DRIVE_AXES; ++axis) {
+            ++t.drive.sequence[axis];
+            t.drive.axis[axis].timestamp_us = (uint64_t)ms * 1000U;
+        }
+        result = step_at(&t, ms);
+    }
+    assert(result == STATE_STEP_FAILED);
+    assert(t.execution.error == PATH_EXEC_ERR_CYCLIC_FEEDBACK);
+    assert(t.execution.phase == PATH_EXEC_PHASE_FAILED);
+    assert(t.execution.feedback_age_us[0] > 20000U);
+    assert(t.stop_calls == 1U && !t.wire);
+    const unsigned at_fault = t.drive.commands;
+    assert(step_at(&t, 30) == STATE_STEP_FAILED);
+    assert(t.drive.commands == at_fault && t.stop_calls == 1U);
+
+    /* Fault latch cleared and TPDOs restored: new path entry must neither
+     * inherit the old clock nor reuse the previous feedback watchdog. */
+    state_path_execution_release_stream(&t.execution);
+    for (unsigned i = 0; i < 4U; ++i)
+        (void)trajectory_prefetch_worker_step(&t.stream);
+    t.drive.auto_feedback = true;
+    enter(&t, ROBOT_EXECUTION_PREVIEW);
+    assert(step_at(&t, 40) == STATE_STEP_RUNNING);
+    assert(step_at(&t, 41) == STATE_STEP_RUNNING);
+    assert(step_at(&t, 42) == STATE_STEP_RUNNING);
+    assert(t.execution.sample_index == 1U);
+    assert(t.execution.skipped_samples == 0U);
+    assert(t.execution.error == PATH_EXEC_ERR_NONE);
+    puts("[PASS] 20-ms stale axis trips controlled hold; reset/re-entry is clean");
+}
+
+static void test_following_error_and_permission_loss_hold(void)
+{
+    for (unsigned mode = 0; mode < 2U; ++mode) {
+        Test t;
+        init(&t, 64U, 2U, UINT32_MAX);
+        assert(step_at(&t, 0U) == STATE_STEP_RUNNING);
+        assert(step_at(&t, 1U) == STATE_STEP_RUNNING);
+        assert(step_at(&t, 2U) == STATE_STEP_RUNNING);
+        assert(t.drive.commands == 1U);
+        PathExecutionInputs inputs = {
+            .motion_permission = mode == 0U,
+            .following_error = mode == 0U,
+            .now_ms = 3U,
+            .now_us = 3000U
+        };
+        PathExecutionOutputs output = {0};
+        const unsigned prior = t.drive.commands;
+        assert(state_path_execution_step(&t.execution, &inputs, &output) ==
+               STATE_STEP_FAILED);
+        assert(t.execution.error ==
+               (mode == 0U ? PATH_EXEC_ERR_FOLLOWING_ERROR :
+                             PATH_EXEC_ERR_MOTION_PERMISSION));
+        assert(t.stop_calls == 1U && !t.wire);
+        assert(t.drive.commands == prior);
+        assert(state_path_execution_step(&t.execution, &inputs, &output) ==
+               STATE_STEP_FAILED);
+        assert(t.stop_calls == 1U && t.drive.commands == prior);
+    }
+    puts("[PASS] Following error / permission loss request one hold, no stale target");
+}
+
+static void test_async_prefill_window(void)
+{
+    Test t;
+    init(&t, 513U, 1U, UINT32_MAX); /* M4 published 256 of required 512 */
+    t.execution.services.prefill_timeout_ms = 10U;
+    assert(step_at(&t, 0U) == STATE_STEP_RUNNING);
+    assert(t.execution.phase == PATH_EXEC_PHASE_CHECK_PREREQUISITES);
+    assert(t.drive.commands == 0U && t.wire_enables == 0U);
+    assert(trajectory_prefetch_worker_step(&t.stream));
+    assert(step_at(&t, 1U) == STATE_STEP_RUNNING);
+    assert(t.execution.phase == PATH_EXEC_PHASE_CONFIGURE_WIRE_FEED);
+    assert(step_at(&t, 2U) == STATE_STEP_RUNNING);
+    assert(t.wire_enables == 1U && t.drive.commands == 0U);
+
+    init(&t, 513U, 1U, UINT32_MAX);
+    t.execution.services.prefill_timeout_ms = 3U;
+    assert(step_at(&t, 0U) == STATE_STEP_RUNNING);
+    assert(step_at(&t, 1U) == STATE_STEP_RUNNING);
+    assert(step_at(&t, 2U) == STATE_STEP_RUNNING);
+    assert(step_at(&t, 3U) == STATE_STEP_FAILED);
+    assert(t.execution.error == PATH_EXEC_ERR_TRAJECTORY_NOT_READY);
+    /* Large monotonically increasing uptime must NOT expire immediately. */
+    init(&t, 513U, 1U, UINT32_MAX);
+    t.execution.services.prefill_timeout_ms = 3U;
+    assert(step_at(&t, 123450U) == STATE_STEP_RUNNING);
+    assert(step_at(&t, 123451U) == STATE_STEP_RUNNING);
+    assert(step_at(&t, 123453U) == STATE_STEP_FAILED);
+    assert(t.execution.error == PATH_EXEC_ERR_TRAJECTORY_NOT_READY);
+    assert(t.wire_enables == 0U && t.drive.commands == 0U);
+    puts("[PASS] bounded async prefill does not enable drives/wire before 512 samples");
+}
+
+static void test_host_feedback_window(void)
+{
+    Test t;
+    init(&t, 128U, 2U, UINT32_MAX);
+    t.execution.config.feedback_max_age_us = 100000U;
+    t.drive.auto_feedback = false;
+    for (uint32_t ms = 0U; ms <= 102U; ++ms) {
+        for (size_t axis = 1U; axis < JOINT_DRIVE_AXES; ++axis) {
+            ++t.drive.sequence[axis];
+            t.drive.axis[axis].timestamp_us = (uint64_t)ms * 1000U;
+        }
+        assert(step_at(&t, ms) == STATE_STEP_RUNNING);
+    }
+    assert(step_at(&t, 103U) == STATE_STEP_FAILED);
+    assert(t.execution.error == PATH_EXEC_ERR_CYCLIC_FEEDBACK);
+    assert(t.stop_calls == 1U && !t.wire);
+    puts("[PASS] Host window tolerates delay and still stops a missing axis");
+}
+
+int main(void)
+{
+    test_host_feedback_window();
+    test_time_paced_feedback_and_skips();
+    test_async_prefill_window();
+    test_following_error_and_permission_loss_hold();
+    test_delayed_axis_feedback();
+    test_missing_axis_fault_and_reentry();
+    test_expired_final_target_fails_closed();
+    test_startup();
+    test_final_feedback_replay_pause_abort();
+    test_runtime_faults();
+    puts("ALL PATH_EXECUTION PREFETCH TESTS PASS");
+    return 0;
+}

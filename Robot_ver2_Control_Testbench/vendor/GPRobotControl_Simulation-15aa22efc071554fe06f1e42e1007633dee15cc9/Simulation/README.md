@@ -1,0 +1,208 @@
+# SIL Kit CANopen / AVATAR simulation
+
+The canonical PC controller simulation is:
+
+```
+Simulation/supervisor_silkit_main.c
+```
+
+It runs the real FreeRTOS Supervisor and robot state modules through the
+project's established SIL Kit CAN backend.
+
+```
+HMI / MATLAB
+      |
+      v
+FreeRTOS Supervisor / StateMachine
+      |
+      v
+CanopenMaster
+      |
+      v
+CANComm/SILKit/silkit_can_backend.cpp
+      |
+      v
+SIL Kit CAN1 @ 1 Mbit/s
+      |
+      +--> AVATAR node 1
+      +--> AVATAR node 2
+      +--> AVATAR node 3
+      +--> AVATAR node 4
+      +--> AVATAR node 5
+      +--> AVATAR node 6
+```
+
+The six virtual actuators are hosted by:
+
+```
+Simulation/AvatarM_CAN/avatar_m_silkit_motor_bank.cpp
+```
+
+Each actuator is an independent SIL Kit participant using the existing
+AVATAR protocol model. NMT, SDO, RPDO4, SYNC, TPDO4 and heartbeat traffic
+therefore crosses the SIL Kit CAN network instead of an in-memory bus shim.
+
+The motor bank includes a deliberately simple position follower only so the
+HMI/MATLAB demo can show motion. It is not a model of AVATAR motor dynamics.
+
+## Build
+
+The established SIL Kit 5.0.7 installation is:
+
+```
+$HOME/silkit_test/SilKit-5.0.7-ubuntu-24.04-x86_64-gcc/SilKit
+```
+
+Configure a SIL Kit build:
+
+```bash
+cmake -S . -B build-can-silkit \
+  -DENABLE_SILKIT=ON \
+  -DSILKIT_ROOT="$HOME/silkit_test/SilKit-5.0.7-ubuntu-24.04-x86_64-gcc/SilKit"
+
+cmake --build build-can-silkit \
+  --target supervisor_silkit_sim avatar_m_silkit_motor_bank supervisor_panel teaching_sim \
+  -j "$(nproc)"
+```
+
+## Runtime processes
+
+The complete PC pipeline uses four Linux-side processes plus MATLAB:
+
+1. `sil-kit-registry`
+2. `avatar_m_silkit_motor_bank`
+3. `supervisor_silkit_sim`
+4. `supervisor_panel` and `teaching_sim`
+5. MATLAB `MATLAB/can_robot_visualizer.m`
+
+The registry URI is `silkit://localhost:8500`. Both the controller and six
+motor participants use SIL Kit network `CAN1` at 1 Mbit/s.
+
+
+## One-command full simulation
+
+To configure/build and start the complete Linux-side pipeline in one command:
+
+```bash
+bash scripts/run_full_can_silkit_simulation.sh
+```
+
+The launcher starts the SIL Kit registry, six AVATAR virtual motors, the
+FreeRTOS Supervisor, Supervisor Panel and Teaching Simulator. It also
+auto-detects the WSL Windows-host IP and passes it to the Supervisor for
+MATLAB UDP telemetry on port 5005. Keep
+`MATLAB/can_robot_visualizer.m` running in MATLAB on Windows.
+
+Press Ctrl-C in the launcher terminal to stop all processes. Runtime logs are
+written to `build-can-silkit/logs/`.
+
+A human-readable debug timeline is written to
+`build-can-silkit/logs/operator-events.txt`. Every received HMI button gets an
+`EVENT` number and timestamp. Meaningful controller changes such as state
+transitions, recorded-point count, validation result, preview completion,
+rejections, E-stop state, wire feed, faults and teaching speed are written as
+`OUTCOME` lines tagged with the most recent event number.
+
+Use `--no-build` to reuse an existing build or `--no-gui` to start only
+the CAN/controller processes.
+
+## Live CANopen dashboard and logs
+
+The full launcher also starts `can_live_monitor`, a passive SIL Kit participant
+on `CAN1`. It does not command the robot; it only observes CAN traffic.
+
+The dashboard shows:
+
+- recent CAN frames with COB-ID, type, node, DLC and decoded values,
+- RPDO4 and TPDO4 activity for all six AVATAR nodes,
+- observed RPDO4-to-TPDO4 response latency,
+- SYNC period and jitter relative to the 2 ms target,
+- missed SYNC estimates within active cyclic bursts,
+- observed frames per second,
+- estimated Classical CAN wire load.
+
+The bus-load figures are estimates derived from observed 11-bit Classical CAN
+frame sizes. The dashboard shows both unstuffed nominal load and a conservative
+bit-stuffing estimate. This SIL Kit setup is a protocol/network integration
+simulation, not a physical CAN arbitration/bit-timing model.
+
+The launcher writes:
+
+```
+build-can-silkit/logs/can-frames.csv
+build-can-silkit/logs/can-metrics.csv
+build-can-silkit/logs/can-monitor.log
+```
+
+`can-frames.csv` contains every observed CAN frame. `can-metrics.csv`
+contains time-series communication metrics suitable for later MATLAB or Python
+plots.
+
+## Automated integration test
+
+When configured with `ENABLE_SILKIT=ON`, CTest registers:
+
+```
+supervisor_silkit_sequence
+```
+
+The test launches its own SIL Kit registry, the six-axis AVATAR motor bank and
+the Supervisor, then drives the HMI protocol through startup, Teaching, Path
+Validation, Preview, Production, Pause/Resume, E-stop recovery and fault
+recovery.
+
+## MATLAB
+
+The Supervisor sends the same versioned status packet used by the HMI to UDP
+port **5005**. The packet contains Supervisor state, CAN node readiness, six
+joint angles and TCP XYZ.
+
+Run:
+
+```
+MATLAB/can_robot_visualizer.m
+```
+
+If MATLAB runs on Windows while the controller runs in WSL2, start the
+Supervisor with `MATLAB_IP` set to the Windows host/gateway address.
+
+## Scope of the simulation
+
+This setup validates application integration over SIL Kit CAN communication.
+It does not prove the physical STM32 transceiver path or real AVATAR actuator
+timing. Detailed arbitration/bit-timing claims require a suitable SIL Kit
+network-simulation layer or physical measurement; they are not inferred from
+the protocol-only virtual nodes.
+
+The removed EtherCAT/A6EC implementation remains recoverable from Git history
+and branch `sara/can-system-integration`.
+
+
+## One-command interactive virtual F/T hand-guiding (Stage 4F2B)
+
+The same canonical full-simulation launcher can run the virtual F/T GUI
+instead of the Cartesian-pose teaching simulator:
+
+```bash
+bash scripts/run_full_can_silkit_simulation.sh --virtual-ft
+```
+
+This mode starts the SIL Kit registry, six virtual AVATAR motors, the
+2 ms C hand-guiding Supervisor with simulated motor dispatch, passive CAN
+monitor, `virtual_ft_gui` and `supervisor_panel`. It preserves the
+existing CANopen control path. The F/T GUI sends sensor-equivalent wrench
+packets on UDP 5013, receives read-only status on UDP 5014 and is started
+before the panel can enter TEACHING. The old `teaching_sim` is not
+launched in this mode to avoid competing command sources.
+
+Wait for IDLE in the supervisor panel, select LINE/TEACHING, then hold
+right/left arrows in the virtual-F/T GUI. MATLAB continues to receive
+virtual-motor feedback on port 5005 and must be opened separately on
+Windows. Ctrl-C shuts down all launched processes. If the F/T GUI is
+closed, the launcher also stops the simulation. Logs are isolated in
+`build-can-silkit/logs/virtual-ft/`; the ordinary launcher uses
+`build-can-silkit/logs/`. Override the base log directory with `SIMULATION_LOG_DIR` (both modes use the selected build tree
+by default).
+
+Use `--virtual-ft --no-build` after a successful first build.
+`--virtual-ft --no-gui` is intentionally disallowed.

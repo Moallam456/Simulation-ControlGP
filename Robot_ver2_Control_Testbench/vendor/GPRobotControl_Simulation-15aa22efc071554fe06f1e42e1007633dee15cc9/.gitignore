@@ -1,0 +1,59 @@
+# CMake build output
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+# Compiled files
+*.o
+*.a
+*.so
+*.out
+*.exe
+
+# Generated test output
+/single_segment_line_c.csv
+
+# Vendor / teammate-shared EtherCAT ESI file (legacy local input)
+A6-EC.xml
+
+# Editor / OS junk
+.vscode/
+.DS_Store
+Thumbs.db
+
+# STM32CubeIDE/CubeMX firmware build artifacts (generated project tracked)
+Firmware/STM32H745/**/Debug/
+Firmware/STM32H745/**/Release/
+Firmware/STM32H745/**/*.elf
+Firmware/STM32H745/**/*.hex
+Firmware/STM32H745/**/*.bin
+Firmware/STM32H745/**/*.map
+Firmware/STM32H745/**/*.list
+Firmware/STM32H745/**/*.su
+
+# Firmware scratch files; CubeMX .ioc and Eclipse project files stay tracked.
+Firmware/STM32H745/**/*.cyclo
+Firmware/STM32H745/**/*.d
+Firmware/STM32H745/**/*.bak
+Firmware/STM32H745/**/.ipc_naming_backup/
+
+# Python bytecode caches; Python source and test fixtures remain visible.
+__pycache__/
+*.pyc
+
+# Generated CMake build variants
+/build-*/
+
+# Local simulation logs and generated evidence
+/.simulation-logs/
+
+# Windows downloaded-file metadata
+*:Zone.Identifier
+
+# Generated simulation and storage test data
+/external_flash.bin
+/external_stream_test.bin
+/simulation_trace.csv
+/trajectory_memory_log.csv

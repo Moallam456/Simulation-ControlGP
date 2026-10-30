@@ -1,0 +1,7 @@
+slprj/
+*.slxc
+*.mexw64
+cache/
+outputs/
+build/
+*.slx.autosave

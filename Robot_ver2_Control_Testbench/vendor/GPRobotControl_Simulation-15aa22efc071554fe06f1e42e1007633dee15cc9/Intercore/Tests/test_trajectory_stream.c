@@ -1,0 +1,314 @@
+/* Concurrent M4 producer / M7 consumer test for non-cacheable shared-SRAM
+ * protocol. Host timing and caches do not represent STM32 hardware.
+ */
+#include "../trajectory_stream.h"
+#include <assert.h>
+#include <pthread.h>
+#include <sched.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdint.h>
+
+typedef struct {
+    uint32_t fail_at;
+    uint32_t calls;
+    uint32_t max_batch;
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    uint32_t block_at;
+    bool entered, released;
+} Source;
+
+typedef struct {
+    TrajectoryShared shared;
+    TrajectoryProducer m4;
+    TrajectoryConsumer m7;
+    Source source;
+} Test;
+
+static int32_t expected(uint32_t index, unsigned joint)
+{
+    const int32_t v = (int32_t)(1000U + index * 97U + joint * 13U);
+    return (joint % 2U) ? -v : v;
+}
+
+static bool read_flash(uint32_t first, TrajectorySample *out,
+                       uint32_t count, void *context)
+{
+    Source *source = context;
+    assert(pthread_mutex_lock(&source->mutex) == 0);
+    ++source->calls;
+    if (count > source->max_batch) source->max_batch = count;
+    if (first == source->block_at) {
+        source->entered = true;
+        assert(pthread_cond_broadcast(&source->condition) == 0);
+        while (!source->released)
+            assert(pthread_cond_wait(&source->condition,
+                                     &source->mutex) == 0);
+    }
+    assert(pthread_mutex_unlock(&source->mutex) == 0);
+    if (first >= source->fail_at) return false;
+    for (uint32_t i = 0; i < count; ++i)
+        for (unsigned j = 0; j < 6U; ++j)
+            out[i].target_position_units[j] = expected(first + i, j);
+    return true;
+}
+
+static TrajectoryIdentity identity(uint32_t id, uint32_t count)
+{
+    const TrajectoryIdentity result = {
+        .program_id = id, .source_revision = 3U,
+        .artifact_crc = UINT32_C(0x98765432),
+        .sample_count = count,
+        .sample_period_us = TRAJECTORY_SAMPLE_PERIOD_US
+    };
+    return result;
+}
+
+static void init(Test *t)
+{
+    memset(t, 0, sizeof(*t));
+    assert(pthread_mutex_init(&t->source.mutex, NULL) == 0);
+    assert(pthread_cond_init(&t->source.condition, NULL) == 0);
+    t->source.fail_at = UINT32_MAX;
+    t->source.block_at = UINT32_MAX;
+    trajectory_shared_initialize(&t->shared);
+    trajectory_m4_init(&t->m4, &t->shared);
+    trajectory_m7_init(&t->m7, &t->shared);
+    assert(trajectory_shared_valid(&t->shared));
+}
+
+static void deinit(Test *t)
+{
+    assert(pthread_cond_destroy(&t->source.condition) == 0);
+    assert(pthread_mutex_destroy(&t->source.mutex) == 0);
+}
+
+static void prefill(Test *t, const TrajectoryIdentity *id)
+{
+    assert(trajectory_m4_prepare(&t->m4, read_flash, &t->source, id));
+    assert(!trajectory_m7_begin(&t->m7, id));
+    assert(trajectory_m4_step(&t->m4));
+    if (id->sample_count > 256U) assert(trajectory_m4_step(&t->m4));
+    assert(trajectory_buffered(&t->shared) ==
+           (id->sample_count < 512U ? id->sample_count : 512U));
+    assert(trajectory_m7_begin(&t->m7, id));
+}
+
+static void verify(const TrajectorySample *s, uint32_t index)
+{
+    for (unsigned j = 0; j < 6U; ++j)
+        assert(s->target_position_units[j] == expected(index, j));
+}
+
+static void test_basic_and_replay(void)
+{
+    static Test t;
+    init(&t);
+    TrajectoryIdentity id = identity(11U, 1536U);
+    prefill(&t, &id);
+    const uint32_t first_epoch = t.m7.epoch;
+    assert(!trajectory_m4_prepare(&t.m4, read_flash, &t.source, &id));
+    TrajectorySample value;
+    assert(trajectory_m7_take(&t.m7, 1U, &value) == TRAJECTORY_READ_INVALID_INDEX);
+    for (uint32_t index = 0U; index < id.sample_count; ++index) {
+        if (trajectory_buffered(&t.shared) <= TRAJECTORY_BATCH)
+            assert(trajectory_m4_step(&t.m4));
+        assert(trajectory_m7_take(&t.m7, index, &value) == TRAJECTORY_READ_OK);
+        verify(&value, index);
+    }
+    assert(t.m4.refills == 6U);
+    assert(t.m7.underruns == 0U);
+    assert(t.source.max_batch <= TRAJECTORY_BATCH);
+    assert(trajectory_buffered(&t.shared) == 0U);
+    assert(trajectory_m7_finish(&t.m7));
+    assert(!trajectory_m4_prepare(&t.m4, read_flash, &t.source, &id));
+    assert(!trajectory_m4_release_acknowledged(&t.shared, first_epoch));
+    assert(trajectory_m4_step(&t.m4));
+    assert(trajectory_m4_release_acknowledged(&t.shared, first_epoch));
+    id = identity(12U, 3U);
+    prefill(&t, &id);
+    assert(t.m7.epoch != first_epoch);
+    for (uint32_t i = 0U; i < 3U; ++i) {
+        assert(trajectory_m7_take(&t.m7, i, &value) == TRAJECTORY_READ_OK);
+        verify(&value, i);
+    }
+    assert(trajectory_m7_take(&t.m7, 3U, &value) == TRAJECTORY_READ_INVALID_INDEX);
+    assert(trajectory_m7_finish(&t.m7));
+    assert(trajectory_m4_step(&t.m4));
+    deinit(&t);
+    puts("[PASS] prefill 512, six refills, ordered six-joint values, replay new epoch");
+}
+
+static void test_starvation_and_flash_error(void)
+{
+    static Test t;
+    init(&t);
+    TrajectoryIdentity id = identity(21U, 1024U);
+    prefill(&t, &id);
+    TrajectorySample value;
+    for (uint32_t i = 0U; i < 512U; ++i)
+        assert(trajectory_m7_take(&t.m7, i, &value) == TRAJECTORY_READ_OK);
+    assert(trajectory_m7_take(&t.m7, 512U, &value) == TRAJECTORY_READ_STARVED);
+    assert(t.m7.underruns == 1U && t.m7.next_index == 512U);
+    assert(trajectory_m7_finish(&t.m7));
+    assert(trajectory_m4_step(&t.m4));
+    t.source.fail_at = 512U;
+    prefill(&t, &id);
+    for (uint32_t i = 0U; i < 256U; ++i)
+        assert(trajectory_m7_take(&t.m7, i, &value) == TRAJECTORY_READ_OK);
+    assert(!trajectory_m4_step(&t.m4));
+    assert(t.shared.read_error != 0U);
+    assert(trajectory_m7_take(&t.m7, 256U, &value) ==
+           TRAJECTORY_READ_STORAGE_ERROR);
+    assert(t.m7.next_index == 256U);
+    assert(trajectory_m7_finish(&t.m7));
+    assert(trajectory_m4_step(&t.m4));
+    deinit(&t);
+    puts("[PASS] starvation and injected flash failure fail closed without advancing");
+}
+
+typedef struct { TrajectoryProducer *producer; bool ok; } Worker;
+static void *worker_once(void *argument)
+{
+    Worker *worker = argument;
+    worker->ok = trajectory_m4_step(worker->producer);
+    return NULL;
+}
+
+static void test_cancel_in_flight(void)
+{
+    static Test t;
+    init(&t);
+    TrajectoryIdentity id = identity(31U, 1024U);
+    prefill(&t, &id);
+    for (uint32_t i = 0; i < 256U; ++i) {
+        TrajectorySample value;
+        assert(trajectory_m7_take(&t.m7, i, &value) == TRAJECTORY_READ_OK);
+    }
+    assert(pthread_mutex_lock(&t.source.mutex) == 0);
+    t.source.block_at = 512U;
+    assert(pthread_mutex_unlock(&t.source.mutex) == 0);
+    Worker worker = { .producer = &t.m4 };
+    pthread_t thread;
+    assert(pthread_create(&thread, NULL, worker_once, &worker) == 0);
+    assert(pthread_mutex_lock(&t.source.mutex) == 0);
+    while (!t.source.entered)
+        assert(pthread_cond_wait(&t.source.condition, &t.source.mutex) == 0);
+    assert(pthread_mutex_unlock(&t.source.mutex) == 0);
+    const uint32_t epoch = t.m7.epoch;
+    assert(trajectory_m7_finish(&t.m7));
+    assert(!trajectory_m4_release_acknowledged(&t.shared, epoch));
+    assert(!trajectory_m4_prepare(&t.m4, read_flash, &t.source, &id));
+    assert(pthread_mutex_lock(&t.source.mutex) == 0);
+    t.source.released = true;
+    assert(pthread_cond_broadcast(&t.source.condition) == 0);
+    assert(pthread_mutex_unlock(&t.source.mutex) == 0);
+    assert(pthread_join(thread, NULL) == 0);
+    assert(worker.ok);
+    assert(trajectory_m4_release_acknowledged(&t.shared, epoch));
+    assert(t.m4.next_index == 512U); /* abandoned read not published */
+    assert(trajectory_buffered(&t.shared) == 256U);
+    t.source.block_at = UINT32_MAX;
+    id = identity(32U, 6U);
+    prefill(&t, &id);
+    TrajectorySample value;
+    assert(trajectory_m7_take(&t.m7, 0U, &value) == TRAJECTORY_READ_OK);
+    verify(&value, 0U);
+    assert(trajectory_m7_finish(&t.m7));
+    assert(trajectory_m4_step(&t.m4));
+    deinit(&t);
+    puts("[PASS] in-flight flash read cannot ack release or publish stale batch");
+}
+
+/* Both cores progress concurrently over 8192 wrapped ring samples.
+ * An empty consumer can retry without advancing (the real controller would
+ * hold/FAULT on starvation instead); this test checks visibility and order. */
+typedef struct { Test *t; TrajectoryIdentity id; } ConcurrentArgs;
+static void *concurrent_producer(void *arg)
+{
+    ConcurrentArgs *args = arg;
+    while (args->t->m4.next_index < args->id.sample_count) {
+        assert(trajectory_m4_step(&args->t->m4));
+        sched_yield();
+    }
+    return NULL;
+}
+static void *concurrent_consumer(void *arg)
+{
+    ConcurrentArgs *args = arg;
+    TrajectorySample sample;
+    for (uint32_t i = 0U; i < args->id.sample_count;) {
+        const TrajectoryReadResult result =
+            trajectory_m7_take(&args->t->m7, i, &sample);
+        if (result == TRAJECTORY_READ_STARVED) {
+            sched_yield();
+            continue;
+        }
+        assert(result == TRAJECTORY_READ_OK);
+        verify(&sample, i);
+        ++i;
+    }
+    assert(trajectory_m7_finish(&args->t->m7));
+    return NULL;
+}
+static void test_bidirectional_thread_interleavings(void)
+{
+    static Test t;
+    init(&t);
+    TrajectoryIdentity id = identity(50U, 8192U);
+    prefill(&t, &id);
+    ConcurrentArgs args = { .t = &t, .id = id };
+    pthread_t producer, consumer;
+    assert(pthread_create(&producer, NULL, concurrent_producer, &args) == 0);
+    assert(pthread_create(&consumer, NULL, concurrent_consumer, &args) == 0);
+    assert(pthread_join(producer, NULL) == 0);
+    assert(pthread_join(consumer, NULL) == 0);
+    assert(trajectory_buffered(&t.shared) == 0U);
+    assert(t.m4.next_index == id.sample_count);
+    assert(t.m4.refills == 32U);
+    assert(trajectory_m4_step(&t.m4));
+    assert(trajectory_m4_release_acknowledged(&t.shared, t.m7.epoch));
+    deinit(&t);
+    puts("[PASS] concurrent M4 producer/M7 consumer over 8192 six-axis samples");
+}
+
+static void test_discard_and_identity(void)
+{
+    static Test t;
+    init(&t);
+    TrajectoryIdentity id = identity(41U, 600U);
+    assert(trajectory_m4_prepare(&t.m4, read_flash, &t.source, &id));
+    assert(trajectory_m4_step(&t.m4));
+    assert(trajectory_m7_discard(&t.m7));
+    /* Regression: discarded generation remains unusable until M4 ACKs,
+     * even though the producer has not cleared the READY flag yet. */
+    assert(!trajectory_m7_begin(&t.m7, &id));
+    assert(trajectory_m4_step(&t.m4));
+    assert(trajectory_m4_release_acknowledged(&t.shared, 1U));
+    assert(!trajectory_m7_begin(&t.m7, &id));
+    id = identity(42U, 513U);
+    assert(trajectory_m4_prepare(&t.m4, read_flash, &t.source, &id));
+    assert(trajectory_m4_step(&t.m4));
+    TrajectoryIdentity wrong = id;
+    wrong.artifact_crc++;
+    assert(!trajectory_m7_begin(&t.m7, &wrong));
+    assert(!trajectory_m7_begin(&t.m7, &id)); /* only half prefetched */
+    assert(trajectory_m4_step(&t.m4));
+    assert(trajectory_m7_begin(&t.m7, &id));
+    assert(trajectory_m7_finish(&t.m7));
+    assert(trajectory_m4_step(&t.m4));
+    deinit(&t);
+    puts("[PASS] discard handshake, full preflight, mismatched artifact rejected");
+}
+
+int main(void)
+{
+    test_basic_and_replay();
+    test_starvation_and_flash_error();
+    test_cancel_in_flight();
+    test_discard_and_identity();
+    test_bidirectional_thread_interleavings();
+    puts("PASS: dual-core trajectory stream host regression");
+    return 0;
+}

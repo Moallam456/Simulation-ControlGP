@@ -1,0 +1,15 @@
+# MATLAB temporary and backup files
+*.asv
+*.m~
+*.autosave
+*.slxc
+slprj/
+codegen/
+simulink_codegen/
+*.mexw64
+
+# Generated F/T lab artifacts
+6D/FT_Sensor/results/
+
+.DS_Store
+Thumbs.db

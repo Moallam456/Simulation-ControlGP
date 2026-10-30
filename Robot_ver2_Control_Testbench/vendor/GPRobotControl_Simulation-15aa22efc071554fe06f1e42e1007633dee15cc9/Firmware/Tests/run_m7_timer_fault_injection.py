@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Compile real STM32 TIM2/TIM3 routines and Supervisor wait/elapsed blocks.
+
+These host mocks exercise production C; they cannot model TIM3 UIF coalescing,
+physical interrupt latency, hardware WCET, CAN load or robot safety.
+"""
+from pathlib import Path
+import subprocess
+import tempfile
+import sys
+
+ROOT = Path(__file__).resolve().parents[2]
+APP = ROOT / "Firmware/STM32H745/CM7/Core/Src/application_supervisor.c"
+SUP = ROOT / "Firmware/STM32H745/CM7/Application/StateMachine/supervisor_task.c"
+TEMPLATE = Path(__file__).with_name("m7_timer_fault_host.c")
+INCLUDE = ROOT / "Firmware/STM32H745/CM7/Application/StateMachine"
+
+
+def extract(text, marker):
+    begin = text.find(marker)
+    if begin == -1 or text.find(marker, begin + len(marker)) != -1:
+        raise ValueError("Expected one source block: " + marker)
+    start = text.find("{", begin)
+    if start == -1:
+        raise ValueError("No opening brace: " + marker)
+    level = 0
+    for pos in range(start, len(text)):
+        if text[pos] == "{":
+            level += 1
+        elif text[pos] == "}":
+            level -= 1
+            if level == 0:
+                return text[begin:pos + 1]
+    raise ValueError("Unbalanced source: " + marker)
+
+
+def main():
+    app, sup = APP.read_text(), SUP.read_text()
+    start_marker = "/* TIM2 overflows are extended by TIM2 ISR."
+    end_marker = "/* An UNDEFINED weak function reference"
+    if app.count(start_marker) != 1 or app.count(end_marker) != 1:
+        raise ValueError("Expected exact production timer block delimiters")
+    functions = app.split(start_marker, 1)[1].split(end_marker, 1)[0]
+    functions = start_marker + functions
+    task = sup.split("static void supervisor_task_entry(void *argument)", 1)[1]
+    wait_part = extract(
+        task.split("const uint64_t cycle_start_us", 1)[0],
+        "if (hardware_timed) {"
+    )
+    elapsed_part = extract(
+        task.split("TRACE_END(TIMING_SUPERVISOR, true);", 1)[1],
+        "if (hardware_timed) {"
+    )
+    source = TEMPLATE.read_text()
+    for key, value in {
+        "/* PRODUCTION_TIMER_FUNCTIONS */": functions,
+        "/* PRODUCTION_WAIT_BLOCK */": wait_part,
+        "/* PRODUCTION_ELAPSED_BLOCK */": elapsed_part,
+    }.items():
+        if source.count(key) != 1:
+            raise ValueError("Unexpected harness placeholder: " + key)
+        source = source.replace(key, value)
+    with tempfile.TemporaryDirectory(prefix="timer_fault_") as folder:
+        test_c = Path(folder) / "timer_fault.c"
+        exe = Path(folder) / "timer_fault"
+        test_c.write_text(source)
+        subprocess.run(
+            ["cc", "-std=c11", "-O0", "-Wall", "-Wextra", "-Werror",
+             "-I", str(INCLUDE), str(test_c), "-o", str(exe)], check=True
+        )
+        subprocess.run([str(exe)], check=True)
+    print("PASS: production-C TIM2/TIM3 and Supervisor timing fault injection")
+    print("NOTE: TIM3 hardware pending-flag coalescing and physical WCET unverified")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (ValueError, OSError, subprocess.CalledProcessError) as exc:
+        sys.exit("FAIL: host timer fault injection: " + str(exc))
