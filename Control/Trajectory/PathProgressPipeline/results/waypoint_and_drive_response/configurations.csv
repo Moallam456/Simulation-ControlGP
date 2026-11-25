@@ -1,0 +1,91 @@
+ID,Case,ReferenceIndex,Group,Initial,Stops,Period_ms,Gain_per_s,Tau_ms,Delay_ms,PositionTolerance_rad,ActualVelocityTolerance_rad_s,Dwell_s,Timeout_s,GateCheck_ms
+run001,Exact-length circle,1,Matrix,Matched,0,2,2,0,0,0.00035,0.003,0.05,1.25,1
+run002,Exact-length circle,1,Matrix,Matched,0,2,2,0,10,0.00035,0.003,0.05,1.25,1
+run003,Exact-length circle,1,Matrix,Matched,0,2,2,10,0,0.00035,0.003,0.05,1.25,1
+run004,Exact-length circle,1,Matrix,Matched,0,2,2,10,10,0.00035,0.003,0.05,1.25,1
+run005,Exact-length circle,1,Matrix,Matched,0,2,2,50,0,0.00035,0.003,0.05,1.25,1
+run006,Exact-length circle,1,Matrix,Matched,0,2,2,50,10,0.00035,0.003,0.05,1.25,1
+run007,Exact-length circle,1,Matrix,Matched,0,2,8,0,0,0.00035,0.003,0.05,1.25,1
+run008,Exact-length circle,1,Matrix,Matched,0,2,8,0,10,0.00035,0.003,0.05,1.25,1
+run009,Exact-length circle,1,Matrix,Matched,0,2,8,10,0,0.00035,0.003,0.05,1.25,1
+run010,Exact-length circle,1,Matrix,Matched,0,2,8,10,10,0.00035,0.003,0.05,1.25,1
+run011,Exact-length circle,1,Matrix,Matched,0,2,8,50,0,0.00035,0.003,0.05,1.25,1
+run012,Exact-length circle,1,Matrix,Matched,0,2,8,50,10,0.00035,0.003,0.05,1.25,1
+run013,Exact-length circle,1,Matrix,Matched,0,10,2,0,0,0.00035,0.003,0.05,1.25,1
+run014,Exact-length circle,1,Matrix,Matched,0,10,2,0,10,0.00035,0.003,0.05,1.25,1
+run015,Exact-length circle,1,Matrix,Matched,0,10,2,10,0,0.00035,0.003,0.05,1.25,1
+run016,Exact-length circle,1,Matrix,Matched,0,10,2,10,10,0.00035,0.003,0.05,1.25,1
+run017,Exact-length circle,1,Matrix,Matched,0,10,2,50,0,0.00035,0.003,0.05,1.25,1
+run018,Exact-length circle,1,Matrix,Matched,0,10,2,50,10,0.00035,0.003,0.05,1.25,1
+run019,Exact-length circle,1,Matrix,Matched,0,10,8,0,0,0.00035,0.003,0.05,1.25,1
+run020,Exact-length circle,1,Matrix,Matched,0,10,8,0,10,0.00035,0.003,0.05,1.25,1
+run021,Exact-length circle,1,Matrix,Matched,0,10,8,10,0,0.00035,0.003,0.05,1.25,1
+run022,Exact-length circle,1,Matrix,Matched,0,10,8,10,10,0.00035,0.003,0.05,1.25,1
+run023,Exact-length circle,1,Matrix,Matched,0,10,8,50,0,0.00035,0.003,0.05,1.25,1
+run024,Exact-length circle,1,Matrix,Matched,0,10,8,50,10,0.00035,0.003,0.05,1.25,1
+run025,Exact-length circle,1,Matrix,Matched,0,50,2,0,0,0.00035,0.003,0.05,1.25,1
+run026,Exact-length circle,1,Matrix,Matched,0,50,2,0,10,0.00035,0.003,0.05,1.25,1
+run027,Exact-length circle,1,Matrix,Matched,0,50,2,10,0,0.00035,0.003,0.05,1.25,1
+run028,Exact-length circle,1,Matrix,Matched,0,50,2,10,10,0.00035,0.003,0.05,1.25,1
+run029,Exact-length circle,1,Matrix,Matched,0,50,2,50,0,0.00035,0.003,0.05,1.25,1
+run030,Exact-length circle,1,Matrix,Matched,0,50,2,50,10,0.00035,0.003,0.05,1.25,1
+run031,Exact-length circle,1,Matrix,Matched,0,50,8,0,0,0.00035,0.003,0.05,1.25,1
+run032,Exact-length circle,1,Matrix,Matched,0,50,8,0,10,0.00035,0.003,0.05,1.25,1
+run033,Exact-length circle,1,Matrix,Matched,0,50,8,10,0,0.00035,0.003,0.05,1.25,1
+run034,Exact-length circle,1,Matrix,Matched,0,50,8,10,10,0.00035,0.003,0.05,1.25,1
+run035,Exact-length circle,1,Matrix,Matched,0,50,8,50,0,0.00035,0.003,0.05,1.25,1
+run036,Exact-length circle,1,Matrix,Matched,0,50,8,50,10,0.00035,0.003,0.05,1.25,1
+run037,Exact-length circle,1,Offset subset,Offset,0,10,2,50,10,0.00035,0.003,0.05,1.25,1
+run038,Exact-length circle,1,Offset subset,Offset,0,10,8,50,10,0.00035,0.003,0.05,1.25,1
+run039,Exact-length circle,1,Offset subset,Offset,0,50,2,50,10,0.00035,0.003,0.05,1.25,1
+run040,Exact-length circle,1,Offset subset,Offset,0,50,8,50,10,0.00035,0.003,0.05,1.25,1
+run041,Multi S-curve,2,Matrix,Matched,1,2,2,0,0,0.00035,0.003,0.05,1.25,1
+run042,Multi S-curve,2,Matrix,Matched,1,2,2,0,10,0.00035,0.003,0.05,1.25,1
+run043,Multi S-curve,2,Matrix,Matched,1,2,2,10,0,0.00035,0.003,0.05,1.25,1
+run044,Multi S-curve,2,Matrix,Matched,1,2,2,10,10,0.00035,0.003,0.05,1.25,1
+run045,Multi S-curve,2,Matrix,Matched,1,2,2,50,0,0.00035,0.003,0.05,1.25,1
+run046,Multi S-curve,2,Matrix,Matched,1,2,2,50,10,0.00035,0.003,0.05,1.25,1
+run047,Multi S-curve,2,Matrix,Matched,1,2,8,0,0,0.00035,0.003,0.05,1.25,1
+run048,Multi S-curve,2,Matrix,Matched,1,2,8,0,10,0.00035,0.003,0.05,1.25,1
+run049,Multi S-curve,2,Matrix,Matched,1,2,8,10,0,0.00035,0.003,0.05,1.25,1
+run050,Multi S-curve,2,Matrix,Matched,1,2,8,10,10,0.00035,0.003,0.05,1.25,1
+run051,Multi S-curve,2,Matrix,Matched,1,2,8,50,0,0.00035,0.003,0.05,1.25,1
+run052,Multi S-curve,2,Matrix,Matched,1,2,8,50,10,0.00035,0.003,0.05,1.25,1
+run053,Multi S-curve,2,Matrix,Matched,1,10,2,0,0,0.00035,0.003,0.05,1.25,1
+run054,Multi S-curve,2,Matrix,Matched,1,10,2,0,10,0.00035,0.003,0.05,1.25,1
+run055,Multi S-curve,2,Matrix,Matched,1,10,2,10,0,0.00035,0.003,0.05,1.25,1
+run056,Multi S-curve,2,Matrix,Matched,1,10,2,10,10,0.00035,0.003,0.05,1.25,1
+run057,Multi S-curve,2,Matrix,Matched,1,10,2,50,0,0.00035,0.003,0.05,1.25,1
+run058,Multi S-curve,2,Matrix,Matched,1,10,2,50,10,0.00035,0.003,0.05,1.25,1
+run059,Multi S-curve,2,Matrix,Matched,1,10,8,0,0,0.00035,0.003,0.05,1.25,1
+run060,Multi S-curve,2,Matrix,Matched,1,10,8,0,10,0.00035,0.003,0.05,1.25,1
+run061,Multi S-curve,2,Matrix,Matched,1,10,8,10,0,0.00035,0.003,0.05,1.25,1
+run062,Multi S-curve,2,Matrix,Matched,1,10,8,10,10,0.00035,0.003,0.05,1.25,1
+run063,Multi S-curve,2,Matrix,Matched,1,10,8,50,0,0.00035,0.003,0.05,1.25,1
+run064,Multi S-curve,2,Matrix,Matched,1,10,8,50,10,0.00035,0.003,0.05,1.25,1
+run065,Multi S-curve,2,Matrix,Matched,1,50,2,0,0,0.00035,0.003,0.05,1.25,1
+run066,Multi S-curve,2,Matrix,Matched,1,50,2,0,10,0.00035,0.003,0.05,1.25,1
+run067,Multi S-curve,2,Matrix,Matched,1,50,2,10,0,0.00035,0.003,0.05,1.25,1
+run068,Multi S-curve,2,Matrix,Matched,1,50,2,10,10,0.00035,0.003,0.05,1.25,1
+run069,Multi S-curve,2,Matrix,Matched,1,50,2,50,0,0.00035,0.003,0.05,1.25,1
+run070,Multi S-curve,2,Matrix,Matched,1,50,2,50,10,0.00035,0.003,0.05,1.25,1
+run071,Multi S-curve,2,Matrix,Matched,1,50,8,0,0,0.00035,0.003,0.05,1.25,1
+run072,Multi S-curve,2,Matrix,Matched,1,50,8,0,10,0.00035,0.003,0.05,1.25,1
+run073,Multi S-curve,2,Matrix,Matched,1,50,8,10,0,0.00035,0.003,0.05,1.25,1
+run074,Multi S-curve,2,Matrix,Matched,1,50,8,10,10,0.00035,0.003,0.05,1.25,1
+run075,Multi S-curve,2,Matrix,Matched,1,50,8,50,0,0.00035,0.003,0.05,1.25,1
+run076,Multi S-curve,2,Matrix,Matched,1,50,8,50,10,0.00035,0.003,0.05,1.25,1
+run077,Multi S-curve,2,Offset subset,Offset,1,10,2,50,10,0.00035,0.003,0.05,1.25,1
+run078,Multi S-curve,2,Offset subset,Offset,1,10,8,50,10,0.00035,0.003,0.05,1.25,1
+run079,Multi S-curve,2,Offset subset,Offset,1,50,2,50,10,0.00035,0.003,0.05,1.25,1
+run080,Multi S-curve,2,Offset subset,Offset,1,50,8,50,10,0.00035,0.003,0.05,1.25,1
+run081,Multi S-curve,2,Stop comparison,Matched,0,2,8,0,0,0.00035,0.003,0.05,1.25,1
+run082,Multi S-curve,2,Stop comparison,Matched,1,2,8,0,0,0.00035,0.003,0.05,1.25,1
+run083,Multi S-curve,2,Stop comparison,Offset,0,2,8,0,0,0.00035,0.003,0.05,1.25,1
+run084,Multi S-curve,2,Stop comparison,Offset,1,2,8,0,0,0.00035,0.003,0.05,1.25,1
+run085,Multi S-curve,2,Stop comparison,Matched,0,50,8,0,0,0.00035,0.003,0.05,1.25,1
+run086,Multi S-curve,2,Stop comparison,Matched,1,50,8,0,0,0.00035,0.003,0.05,1.25,1
+run087,Multi S-curve,2,Stop comparison,Offset,0,50,8,0,0,0.00035,0.003,0.05,1.25,1
+run088,Multi S-curve,2,Stop comparison,Offset,1,50,8,0,0,0.00035,0.003,0.05,1.25,1
+run089,Multi S-curve,2,Negative,Offset,1,50,0,0,0,0.00035,0.003,0.05,1.25,1
+run090,Multi S-curve,2,Negative,Offset,1,50,8,50,10,1e-12,1e-10,0.05,0.08,1
