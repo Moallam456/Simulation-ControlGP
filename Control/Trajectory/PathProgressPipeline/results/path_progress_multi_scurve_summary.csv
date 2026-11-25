@@ -1,0 +1,2 @@
+Samples,Segments,Stops,Duration_s,TrapezoidDuration_s,ExecPosition_m,ExecRotation_rad,SpatialPosition_m,SpatialRotation_rad,JointStep_rad,PeakVelocity_rad_s,PeakAcceleration_rad_s2,PeakJerk_rad_s3,VelocityLimit,AccelerationLimit,JerkLimit
+429,5,6,21.3600758515116,20.1100758515116,1.34848293435211e-06,5.19551240355742e-06,1.35811035495617e-06,5.19597997132931e-06,0.0282136619737592,0.565594983098407,1.96371365811545,10.8641954457061,Within provisional URDF values at samples,Unavailable,Unavailable

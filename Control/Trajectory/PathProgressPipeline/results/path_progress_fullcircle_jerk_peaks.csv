@@ -1,0 +1,3 @@
+Search,Joint,Time_s,Progress,NearestSample,SignedJerk_rad_s3,PolynomialInterval,ArcLength_m,AbsJerk_rad_s3,Side
+sampled,3,6.1,0.612752862113606,123,-587.176833852704,232,0.5775,587.176833852704,execution sample
+continuous one-sided,3,6.09980428121253,0.612732095490716,123,-587.176833852704,232,0.577480428121254,587.176833852704,right
