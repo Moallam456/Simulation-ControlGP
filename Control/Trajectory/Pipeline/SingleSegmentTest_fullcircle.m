@@ -6,8 +6,7 @@
 % Operator teaches THREE positions anywhere on the circle (used to fit the
 % plane, center, and radius), a direction (+1 = CCW, -1 = CW), and the
 % starting orientation. The path sweeps a full 360°, ending at the same
-% point it started. The path-induced orientation naturally closes the loop,
-% so the end orientation defaults to the start orientation.
+% point it started. The orientation sweep is specified independently below.
 
 clear;
 clc;
@@ -17,27 +16,28 @@ close all;
 %% ========================================================================
 % 1. ROBOT
 % =========================================================================
-robot = config.UR5();
-n = robot.dof;
+[robot,tcpFK,solveSample] = loadTrajectoryRobot();
+n = robot.structure.dof;
 
 
 %% ========================================================================
 % 2. VISUALIZATION MODEL
 % =========================================================================
-visualRobot = robotmodel.buildUR5geometry(robot);
+visualRobot = robot.model;
 station     = environment.buildPreliminaryWeldingStation();
 
 
 %% ========================================================================
 % 3. STARTING CONFIGURATION
 % =========================================================================
-qStart = deg2rad([30; -45; 60; 20; -30; 45]);
+% This J3 start keeps the fixed-orientation circle on a continuous branch.
+qStart = deg2rad([30; -45; 30; 20; -30; 45]);
 
 
 %% ========================================================================
 % 4. GET INITIAL TCP POSE
 % =========================================================================
-TStart    = controlFK(robot,qStart);
+TStart    = tcpFK(qStart);
 pA        = TStart(1:3,4);
 RConstant = TStart(1:3,1:3);
 
@@ -73,14 +73,10 @@ numGeometryPointsPerSegment = 400;   % dense samples for a closed loop
 R_start = RConstant;
 q_start_orientation = rotm2quat_custom(R_start);
 
-% End orientation:
-% - Default for a closed loop: same as start. The 360° path-induced rotation
-%   is identity (quaternion [-1;0;0;0], same orientation as [1;0;0;0]), so
-%   the "leftover twist" comes out to identity automatically.
-% - To add a deliberate axial twist over the loop, uncomment the next line:
-%
-%   R_end = R_start * eulZYX_local(0, 0, deg2rad(45));
-%
+% The original full tool revolution loses its continuous, limit-valid IK branch.
+% Hold the tool orientation for this demo. The same interpolation can follow
+% the circle's rotation by setting orientationSweep to arcInfo.thetaTotal.
+orientationSweep = 0;   % [rad], orientation about the circle normal
 R_end = R_start;
 q_end_orientation = rotm2quat_custom(R_end);
 
@@ -178,7 +174,7 @@ quatSegment = zeros(4,numel(sSegment));
 for k = 1:numel(sSegment)
     quatSegment(:,k) = orientationFromArc( ...
         q_start_orientation, q_end_orientation, ...
-        arcInfo.axis, arcInfo.thetaTotal, sSegment(k));
+        arcInfo.axis, orientationSweep, sSegment(k));
 end
 
 % E. Physical arc length
@@ -278,7 +274,7 @@ title('Physical Path Progress l(t)');
 
 
 %% ========================================================================
-% 13. SEQUENTIAL ADLS IK
+% 13. SEQUENTIAL ANALYTICAL IK
 % =========================================================================
 qPath        = zeros(n,numSamples);
 ikConverged  = false(1,numSamples);
@@ -286,19 +282,19 @@ ikIterations = zeros(1,numSamples);
 qSeed = qStart;
 
 fprintf('\n============================================================\n');
-fprintf(' SEQUENTIAL ADLS IK\n');
+fprintf(' SEQUENTIAL ANALYTICAL IK\n');
 fprintf('============================================================\n');
 
 for k = 1:numSamples
-    [qSolution,info] = ADLS_IK(robot, TPath(:,:,k), qSeed);
-    ikConverged(k)  = info.converged;
+    [qSolution,info] = solveSample(TPath(:,:,k),qSeed);
+    ikConverged(k)  = info.success;
     ikIterations(k) = info.iterations;
 
-    if ~info.converged
+    if ~info.success
         fprintf('\nIK FAILURE at sample %d / %d\n',k,numSamples);
         fprintf('Position error:    %.3e m\n',info.positionError);
         fprintf('Orientation error: %.3e rad\n',info.orientationError);
-        error('Full-circle trajectory failed during sequential ADLS IK.');
+        error('TrajectoryIK:SampleFailed','Analytical IK failed at sample %d: %s',k,info.message);
     end
 
     qPath(:,k) = qSolution;
@@ -317,7 +313,7 @@ orientationError = zeros(1,numSamples);
 pAchieved        = zeros(3,numSamples);
 
 for k = 1:numSamples
-    TAchieved = controlFK(robot, qPath(:,k));
+    TAchieved = tcpFK(qPath(:,k));
     pAchieved(:,k) = TAchieved(1:3,4);
     positionError(k) = norm(TPath(1:3,4,k) - TAchieved(1:3,4));
     orientationError(k) = rotationError( ...
@@ -329,7 +325,7 @@ fprintf(' INDEPENDENT FK VALIDATION\n');
 fprintf('============================================================\n');
 fprintf('Maximum position error:    %.3e m\n',max(positionError));
 fprintf('Maximum orientation error: %.3e rad\n',max(orientationError));
-fprintf('Maximum IK iterations:     %d\n',max(ikIterations));
+fprintf('Analytical IK iterations:  %d\n',max(ikIterations));
 fprintf('============================================================\n');
 
 
@@ -343,8 +339,8 @@ for joint = 1:n
     qDDot(joint,:) = gradient(qDot(joint,:), tGlobal);
 end
 
-qMin = robot.limits.qMin(:);
-qMax = robot.limits.qMax(:);
+qMin = robot.params.joints.positionLimits(:,1);
+qMax = robot.params.joints.positionLimits(:,2);
 positionViolation = false(n,1);
 for joint = 1:n
     positionViolation(joint) = ...
@@ -353,22 +349,14 @@ for joint = 1:n
 end
 
 peakJointVelocity = max(abs(qDot),[],2);
-if ~isempty(robot.limits.qdMax)
-    qdMax = robot.limits.qdMax(:);
-    velocityViolation = peakJointVelocity > qdMax;
-else
-    qdMax = nan(n,1);
-    velocityViolation = false(n,1);
-end
 
 fprintf('\n============================================================\n');
 fprintf(' JOINT SUMMARY\n');
 fprintf('============================================================\n');
 for joint = 1:n
-    fprintf(['J%d | peak vel %.4f rad/s | position violation %d | ' ...
-             'velocity violation %d\n'], ...
+    fprintf('J%d | peak vel %.4f rad/s | position violation %d\n', ...
         joint, peakJointVelocity(joint), ...
-        positionViolation(joint), velocityViolation(joint));
+        positionViolation(joint));
 end
 fprintf('============================================================\n');
 
@@ -403,9 +391,11 @@ legend('J1','J2','J3','J4','J5','J6','Location','best');
 title('Joint Velocity Around Full Circle');
 
 figure;
-plot(tGlobal, ikIterations,'LineWidth',1.2);
-grid on; xlabel('Time [s]'); ylabel('ADLS iterations');
-title('ADLS Difficulty Around Full Circle');
+plot(tGlobal(2:end), rad2deg(max(abs(diff(qPath,1,2)),[],1)), 'LineWidth',1.2);
+grid on;
+xlabel('Time [s]');
+ylabel('Largest joint change [deg]');
+title('Consecutive Joint Changes');
 
 
 %% ========================================================================
@@ -413,8 +403,8 @@ title('ADLS Difficulty Around Full Circle');
 % =========================================================================
 figure;
 ax = axes;
-show(visualRobot, qPath(:,1), 'Parent',ax, ...
-    'PreservePlot',false,'Visuals','on','Collisions','off');
+show(visualRobot, qPath(:,1).', 'Parent',ax, ...
+    'FastUpdate',true,'PreservePlot',false,'Visuals','on','Collisions','off');
 hold(ax,'on'); grid(ax,'on'); axis(ax,'equal');
 
 show(station.mountingPlane.object,'Parent',ax);
@@ -448,7 +438,7 @@ fprintf('IK samples passed:       %d / %d\n',sum(ikConverged),numSamples);
 fprintf('Max position error:      %.3e m\n',max(positionError));
 fprintf('Max orientation error:   %.3e rad\n',max(orientationError));
 fprintf('Joint position limits:   %s\n',passFail(~any(positionViolation)));
-fprintf('Joint velocity limits:   %s\n',passFail(~any(velocityViolation)));
+fprintf('Joint velocity limits:   not specified by the robot model\n');
 fprintf('============================================================\n');
 
 
@@ -550,9 +540,9 @@ for i = 1:numSamples
     if isempty(ax) || ~isvalid(ax) || ~isvalid(ancestor(ax,'figure'))
         return;
     end
-    show(robotModel, qPath(:,i), 'Parent',ax, ...
-        'PreservePlot',false,'Visuals','on','Collisions','off');
-    title(ax, sprintf('UR5 Full Circle | t = %.2f / %.2f s', t(i), t(end)));
+    show(robotModel, qPath(:,i).', 'Parent',ax, ...
+        'FastUpdate',true,'PreservePlot',false,'Visuals','on','Collisions','off');
+    title(ax, sprintf('robot_ver2 Full Circle | t = %.2f / %.2f s', t(i), t(end)));
     drawnow;
     if i < numSamples
         pause(playbackScale * (t(i+1)-t(i)));

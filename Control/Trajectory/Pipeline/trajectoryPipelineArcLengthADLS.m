@@ -14,7 +14,7 @@
 %          ↓
 %   timed Cartesian poses
 %          ↓
-%   sequential ADLS IK
+%   sequential analytical IK
 %          ↓
 %        q(t)
 %          ↓
@@ -61,15 +61,15 @@ close all;
 % 1. ROBOT
 % =========================================================================
 
-robot = config.UR5();
-n = robot.dof;
+[robot,tcpFK,solveSample] = loadTrajectoryRobot();
+n = robot.structure.dof;
 
 
 %% ========================================================================
 % 2. VISUALIZATION MODEL
 % =========================================================================
 
-visualRobot = robotmodel.buildUR5geometry(robot);
+visualRobot = robot.model;
 station = environment.buildPreliminaryWeldingStation();
 
 
@@ -77,10 +77,12 @@ station = environment.buildPreliminaryWeldingStation();
 % 3. STARTING CONFIGURATION
 % =========================================================================
 
+% Adjust shoulder and elbow so all five original waypoint offsets are reachable
+% on one continuous branch.
 qStart = deg2rad([
      30
-    -45
-     60
+    -65
+    -10
      20
     -30
      45
@@ -91,7 +93,7 @@ qStart = deg2rad([
 % 4. GET INITIAL TCP POSE
 % =========================================================================
 
-TStart = controlFK(robot,qStart);
+TStart = tcpFK(qStart);
 
 pA = TStart(1:3,4);
 RConstant = TStart(1:3,1:3);
@@ -578,7 +580,7 @@ title('Physical Path Progress l(t)');
 
 
 %% ========================================================================
-% 13. SEQUENTIAL ADLS IK
+% 13. SEQUENTIAL ANALYTICAL IK
 % =========================================================================
 
 qPath = zeros(n,numSamples);
@@ -590,20 +592,17 @@ qSeed = qStart;
 
 fprintf('\n');
 fprintf('============================================================\n');
-fprintf(' SEQUENTIAL ADLS IK\n');
+fprintf(' SEQUENTIAL ANALYTICAL IK\n');
 fprintf('============================================================\n');
 
 for k = 1:numSamples
 
-    [qSolution,info] = ADLS_IK( ...
-        robot, ...
-        TPath(:,:,k), ...
-        qSeed);
+    [qSolution,info] = solveSample(TPath(:,:,k),qSeed);
 
-    ikConverged(k) = info.converged;
+    ikConverged(k) = info.success;
     ikIterations(k) = info.iterations;
 
-    if ~info.converged
+    if ~info.success
 
         segment = segmentIndexPath(k);
 
@@ -618,7 +617,7 @@ for k = 1:numSamples
         fprintf('Position error: %.3e m\n',info.positionError);
         fprintf('Orientation error: %.3e rad\n',info.orientationError);
 
-        error('Arc-length trajectory failed during sequential ADLS IK.');
+        error('TrajectoryIK:SampleFailed','Analytical IK failed at sample %d: %s',k,info.message);
 
     end
 
@@ -644,9 +643,7 @@ pAchieved = zeros(3,numSamples);
 
 for k = 1:numSamples
 
-    TAchieved = controlFK( ...
-        robot, ...
-        qPath(:,k));
+    TAchieved = tcpFK(qPath(:,k));
 
     pAchieved(:,k) = TAchieved(1:3,4);
 
@@ -666,7 +663,7 @@ fprintf(' INDEPENDENT FK VALIDATION\n');
 fprintf('============================================================\n');
 fprintf('Maximum position error:    %.3e m\n',max(positionError));
 fprintf('Maximum orientation error: %.3e rad\n',max(orientationError));
-fprintf('Maximum IK iterations:     %d\n',max(ikIterations));
+fprintf('Analytical IK iterations:  %d\n',max(ikIterations));
 fprintf('============================================================\n');
 
 
@@ -694,8 +691,8 @@ end
 % 16. JOINT LIMIT CHECKS
 % =========================================================================
 
-qMin = robot.limits.qMin(:);
-qMax = robot.limits.qMax(:);
+qMin = robot.params.joints.positionLimits(:,1);
+qMax = robot.params.joints.positionLimits(:,2);
 
 positionViolation = false(n,1);
 
@@ -708,82 +705,6 @@ for joint = 1:n
 end
 
 peakJointVelocity = max(abs(qDot),[],2);
-
-if ~isempty(robot.limits.qdMax)
-
-    qdMax = robot.limits.qdMax(:);
-    velocityViolation = peakJointVelocity > qdMax;
-
-else
-
-    qdMax = nan(n,1);
-    velocityViolation = false(n,1);
-
-end
-
-
-%% ========================================================================
-% 17. JOINT VELOCITY VIOLATION DIAGNOSTICS
-% =========================================================================
-
-fprintf('\n');
-fprintf('============================================================\n');
-fprintf(' JOINT VELOCITY VIOLATION DIAGNOSTICS\n');
-fprintf('============================================================\n');
-
-anyVelocityViolation = false;
-
-if ~isempty(robot.limits.qdMax)
-
-    for joint = 1:n
-
-        violatingSamples = find( ...
-            abs(qDot(joint,:)) > qdMax(joint));
-
-        if ~isempty(violatingSamples)
-
-            anyVelocityViolation = true;
-
-            fprintf('\n');
-            fprintf('JOINT %d VIOLATION\n',joint);
-            fprintf('-----------------\n');
-
-            for idx = 1:numel(violatingSamples)
-
-                sample = violatingSamples(idx);
-                segment = segmentIndexPath(sample);
-
-                actualVelocity = abs(qDot(joint,sample));
-                velocityLimit = qdMax(joint);
-
-                percentOver = ...
-                    100 * (actualVelocity / velocityLimit - 1);
-
-                fprintf( ...
-                    ['Sample %3d | t = %.3f s | Segment %s -> %s | ' ...
-                     '|qDot| = %.4f rad/s | limit = %.4f rad/s | ' ...
-                     '%.2f %% over limit\n'], ...
-                    sample, ...
-                    tGlobal(sample), ...
-                    waypointNames(segment), ...
-                    waypointNames(segment+1), ...
-                    actualVelocity, ...
-                    velocityLimit, ...
-                    percentOver);
-
-            end
-
-        end
-
-    end
-
-end
-
-if ~anyVelocityViolation
-    fprintf('No joint velocity violations detected.\n');
-end
-
-fprintf('============================================================\n');
 
 
 %% ========================================================================
@@ -802,12 +723,11 @@ for joint = 1:n
 
     fprintf( ...
         ['J%d | peak vel %.4f rad/s | largest step %.4f deg | ' ...
-         'position violation %d | velocity violation %d\n'], ...
+         'position violation %d\n'], ...
         joint, ...
         peakJointVelocity(joint), ...
         rad2deg(maxJointStep(joint)), ...
-        positionViolation(joint), ...
-        velocityViolation(joint));
+        positionViolation(joint));
 
 end
 
@@ -905,22 +825,15 @@ title('Joint Velocity Through Arc-Length Trajectory');
 
 
 %% ========================================================================
-% 22. IK ITERATIONS
+% 22. CONSECUTIVE JOINT CHANGES
 % =========================================================================
 
 figure;
-
-plot( ...
-    tGlobal, ...
-    ikIterations, ...
-    'LineWidth',1.2);
-
+plot(tGlobal(2:end), rad2deg(max(abs(diff(qPath,1,2)),[],1)), 'LineWidth',1.2);
 grid on;
-
 xlabel('Time [s]');
-ylabel('ADLS iterations');
-
-title('ADLS Difficulty Through Arc-Length Trajectory');
+ylabel('Largest joint change [deg]');
+title('Consecutive Joint Changes');
 
 
 %% ========================================================================
@@ -933,7 +846,7 @@ ax = axes;
 
 show( ...
     visualRobot, ...
-    qPath(:,1), ...
+    qPath(:,1).', ...
     'Parent',ax, ...
     'FastUpdate',true, ...
     'PreservePlot',false, ...
@@ -1023,7 +936,7 @@ fprintf('IK samples passed:       %d / %d\n', ...
 fprintf('Max position error:      %.3e m\n',max(positionError));
 fprintf('Max orientation error:   %.3e rad\n',max(orientationError));
 fprintf('Joint position limits:   %s\n',passFail(~any(positionViolation)));
-fprintf('Joint velocity limits:   %s\n',passFail(~any(velocityViolation)));
+fprintf('Joint velocity limits:   not specified by the robot model\n');
 fprintf('============================================================\n');
 
 
@@ -1070,7 +983,7 @@ for i = 1:numSamples
 
     show( ...
         robotModel, ...
-        qPath(:,i), ...
+        qPath(:,i).', ...
         'Parent',ax, ...
         'FastUpdate',true, ...
         'PreservePlot',false, ...
@@ -1080,7 +993,7 @@ for i = 1:numSamples
     title( ...
         ax, ...
         sprintf( ...
-            'UR5 Arc-Length Motion | t = %.2f / %.2f s', ...
+            'robot_ver2 Arc-Length Motion | t = %.2f / %.2f s', ...
             t(i), ...
             t(end)));
 

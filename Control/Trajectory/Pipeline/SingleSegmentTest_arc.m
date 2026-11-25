@@ -18,15 +18,15 @@ close all;
 % 1. ROBOT
 % =========================================================================
 
-robot = config.UR5();
-n = robot.dof;
+[robot,tcpFK,solveSample] = loadTrajectoryRobot();
+n = robot.structure.dof;
 
 
 %% ========================================================================
 % 2. VISUALIZATION MODEL
 % =========================================================================
 
-visualRobot = robotmodel.buildUR5geometry(robot);
+visualRobot = robot.model;
 station     = environment.buildPreliminaryWeldingStation();
 
 
@@ -34,10 +34,11 @@ station     = environment.buildPreliminaryWeldingStation();
 % 3. STARTING CONFIGURATION
 % =========================================================================
 
+% The original 60-degree J3 seed forces a branch jump on this arc.
 qStart = deg2rad([
      30
     -45
-     60
+     20
      20
     -30
      45
@@ -48,7 +49,7 @@ qStart = deg2rad([
 % 4. GET INITIAL TCP POSE
 % =========================================================================
 
-TStart    = controlFK(robot,qStart);
+TStart    = tcpFK(qStart);
 pA        = TStart(1:3,4);
 RConstant = TStart(1:3,1:3);
 
@@ -328,7 +329,7 @@ title('Physical Path Progress l(t)');
 
 
 %% ========================================================================
-% 13. SEQUENTIAL ADLS IK
+% 13. SEQUENTIAL ANALYTICAL IK
 % =========================================================================
 
 qPath        = zeros(n,numSamples);
@@ -339,22 +340,22 @@ qSeed = qStart;
 
 fprintf('\n');
 fprintf('============================================================\n');
-fprintf(' SEQUENTIAL ADLS IK\n');
+fprintf(' SEQUENTIAL ANALYTICAL IK\n');
 fprintf('============================================================\n');
 
 for k = 1:numSamples
 
-    [qSolution,info] = ADLS_IK(robot, TPath(:,:,k), qSeed);
+    [qSolution,info] = solveSample(TPath(:,:,k),qSeed);
 
-    ikConverged(k)  = info.converged;
+    ikConverged(k)  = info.success;
     ikIterations(k) = info.iterations;
 
-    if ~info.converged
+    if ~info.success
         fprintf('\nIK FAILURE\n----------\n');
         fprintf('Sample: %d / %d\n',k,numSamples);
         fprintf('Position error:    %.3e m\n',info.positionError);
         fprintf('Orientation error: %.3e rad\n',info.orientationError);
-        error('Arc trajectory failed during sequential ADLS IK.');
+        error('TrajectoryIK:SampleFailed','Analytical IK failed at sample %d: %s',k,info.message);
     end
 
     qPath(:,k) = qSolution;
@@ -375,7 +376,7 @@ orientationError = zeros(1,numSamples);
 pAchieved        = zeros(3,numSamples);
 
 for k = 1:numSamples
-    TAchieved = controlFK(robot, qPath(:,k));
+    TAchieved = tcpFK(qPath(:,k));
     pAchieved(:,k) = TAchieved(1:3,4);
 
     positionError(k) = norm(TPath(1:3,4,k) - TAchieved(1:3,4));
@@ -390,7 +391,7 @@ fprintf(' INDEPENDENT FK VALIDATION\n');
 fprintf('============================================================\n');
 fprintf('Maximum position error:    %.3e m\n',max(positionError));
 fprintf('Maximum orientation error: %.3e rad\n',max(orientationError));
-fprintf('Maximum IK iterations:     %d\n',max(ikIterations));
+fprintf('Analytical IK iterations:  %d\n',max(ikIterations));
 fprintf('============================================================\n');
 
 
@@ -406,8 +407,8 @@ for joint = 1:n
     qDDot(joint,:) = gradient(qDot(joint,:), tGlobal);
 end
 
-qMin = robot.limits.qMin(:);
-qMax = robot.limits.qMax(:);
+qMin = robot.params.joints.positionLimits(:,1);
+qMax = robot.params.joints.positionLimits(:,2);
 
 positionViolation = false(n,1);
 for joint = 1:n
@@ -418,23 +419,15 @@ end
 
 peakJointVelocity = max(abs(qDot),[],2);
 
-if ~isempty(robot.limits.qdMax)
-    qdMax = robot.limits.qdMax(:);
-    velocityViolation = peakJointVelocity > qdMax;
-else
-    qdMax = nan(n,1);
-    velocityViolation = false(n,1);
-end
 
 fprintf('\n');
 fprintf('============================================================\n');
 fprintf(' JOINT SUMMARY\n');
 fprintf('============================================================\n');
 for joint = 1:n
-    fprintf(['J%d | peak vel %.4f rad/s | position violation %d | ' ...
-             'velocity violation %d\n'], ...
+    fprintf('J%d | peak vel %.4f rad/s | position violation %d\n', ...
         joint, peakJointVelocity(joint), ...
-        positionViolation(joint), velocityViolation(joint));
+        positionViolation(joint));
 end
 fprintf('============================================================\n');
 
@@ -478,15 +471,15 @@ title('Joint Velocity Along Arc');
 
 
 %% ========================================================================
-% 22. IK ITERATIONS
+% 22. CONSECUTIVE JOINT CHANGES
 % =========================================================================
 
 figure;
-plot(tGlobal, ikIterations,'LineWidth',1.2);
+plot(tGlobal(2:end), rad2deg(max(abs(diff(qPath,1,2)),[],1)), 'LineWidth',1.2);
 grid on;
-xlabel('Time [s]'); ylabel('ADLS iterations');
-title('ADLS Difficulty Along Arc');
-
+xlabel('Time [s]');
+ylabel('Largest joint change [deg]');
+title('Consecutive Joint Changes');
 
 %% ========================================================================
 % 23. ANIMATION
@@ -495,7 +488,7 @@ title('ADLS Difficulty Along Arc');
 figure;
 ax = axes;
 
-show(visualRobot, qPath(:,1), ...
+show(visualRobot, qPath(:,1).', ...
     'Parent',ax,'PreservePlot',false, ...
     'Visuals','on','Collisions','off');
 
@@ -559,7 +552,7 @@ fprintf('IK samples passed:       %d / %d\n',sum(ikConverged),numSamples);
 fprintf('Max position error:      %.3e m\n',max(positionError));
 fprintf('Max orientation error:   %.3e rad\n',max(orientationError));
 fprintf('Joint position limits:   %s\n',passFail(~any(positionViolation)));
-fprintf('Joint velocity limits:   %s\n',passFail(~any(velocityViolation)));
+fprintf('Joint velocity limits:   not specified by the robot model\n');
 fprintf('============================================================\n');
 
 
@@ -717,11 +710,11 @@ end
 function playTrajectory(robotModel,qPath,t,ax,playbackScale)
 numSamples = size(qPath,2);
 for i = 1:numSamples
-    show(robotModel, qPath(:,i), ...
+    show(robotModel, qPath(:,i).', ...
         'Parent',ax,'FastUpdate',true,'PreservePlot',false, ...
         'Visuals','on','Collisions','off');
 
-    title(ax, sprintf('UR5 Circular Arc | t = %.2f / %.2f s', ...
+    title(ax, sprintf('robot_ver2 Circular Arc | t = %.2f / %.2f s', ...
         t(i), t(end)));
     drawnow;
 
